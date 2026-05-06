@@ -27,7 +27,8 @@ COPY --from=backend /usr/local/bin/p2p_server /usr/local/bin/p2p_server
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/entrypoint.sh /usr/local/bin/loopline-entrypoint
 
-RUN chmod +x /usr/local/bin/loopline-entrypoint \
+RUN sed -i 's/\r$//' /usr/local/bin/loopline-entrypoint \
+  && chmod +x /usr/local/bin/loopline-entrypoint \
   && mkdir -p /data/received /run/nginx
 
 ENV P2P_BIND_HOST=0.0.0.0 \
@@ -39,4 +40,4 @@ ENV P2P_BIND_HOST=0.0.0.0 \
 EXPOSE 8080 8788
 VOLUME ["/data/received"]
 
-CMD ["loopline-entrypoint"]
+CMD ["/bin/sh", "/usr/local/bin/loopline-entrypoint"]
