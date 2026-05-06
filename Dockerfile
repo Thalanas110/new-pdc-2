@@ -29,15 +29,16 @@ COPY docker/entrypoint.sh /usr/local/bin/loopline-entrypoint
 
 RUN sed -i 's/\r$//' /usr/local/bin/loopline-entrypoint \
   && chmod +x /usr/local/bin/loopline-entrypoint \
-  && mkdir -p /data/received /run/nginx
+  && mkdir -p /data/received /data/sent /run/nginx
 
 ENV P2P_BIND_HOST=0.0.0.0 \
   P2P_HTTP_PORT=8787 \
   P2P_TRANSFER_PORT=8788 \
   P2P_ALLOW_REMOTE=1 \
-  P2P_RECEIVE_DIR=/data/received
+  P2P_RECEIVE_DIR=/data/received \
+  P2P_SENT_DIR=/data/sent
 
 EXPOSE 8080 8788
-VOLUME ["/data/received"]
+VOLUME ["/data/received", "/data/sent"]
 
 CMD ["/bin/sh", "/usr/local/bin/loopline-entrypoint"]

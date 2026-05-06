@@ -8,10 +8,12 @@ services:
       P2P_TRANSFER_PORT: 8788
       P2P_ALLOW_REMOTE: "1"
       P2P_RECEIVE_DIR: /data/received
+      P2P_SENT_DIR: /data/sent
       P2P_ADVERTISED_HOST: ${P2P_ADVERTISED_HOST:-0.0.0.0}
     ports:
       - "8080:8080"
       - "8788:8788"
     volumes:
       - ./backend/received:/data/received
+      - ./backend/sent:/data/sent
     restart: unless-stopped

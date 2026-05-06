@@ -10,5 +10,8 @@ describe('root transfer home', () => {
     expect(screen.getByRole('button', { name: /Start receiver/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Send file/i })).toBeDisabled();
     expect(screen.getByLabelText(/Peer host/i)).toHaveValue('127.0.0.1');
+    expect(screen.getByRole('heading', { name: /File vault/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Received/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sent/i })).toBeInTheDocument();
   });
 });

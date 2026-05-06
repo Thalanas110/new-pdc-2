@@ -1,4 +1,4 @@
-import type { BackendStatus } from './transferModel';
+import type { BackendStatus, FileKind, TransferFileEntry } from './transferModel';
 import { getTransferPercent } from './transferModel';
 
 export async function fetchStatus(signal?: AbortSignal): Promise<BackendStatus> {
@@ -17,6 +17,15 @@ export async function startReceiver(port: number): Promise<void> {
     const body = await response.text();
     throw new Error(body || `Receiver request failed: ${response.status}`);
   }
+}
+
+export async function fetchFiles(kind: FileKind, signal?: AbortSignal): Promise<TransferFileEntry[]> {
+  const response = await fetch(`/api/files?kind=${kind}`, { signal });
+  if (!response.ok) {
+    throw new Error(`File list request failed: ${response.status}`);
+  }
+  const payload = (await response.json()) as { files?: TransferFileEntry[] };
+  return payload.files ?? [];
 }
 
 export type SendFileOptions = {

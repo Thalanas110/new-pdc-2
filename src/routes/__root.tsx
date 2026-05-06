@@ -4,11 +4,18 @@ import {
   AlertTriangle,
   CheckCircle2,
   Download,
+  Eye,
   FileUp,
+  FileText,
+  Film,
+  FolderOpen,
   HardDrive,
+  Image as ImageIcon,
   Loader2,
+  Music,
   Play,
   RadioTower,
+  RefreshCw,
   Server,
   ShieldCheck,
   UploadCloud,
@@ -16,11 +23,14 @@ import {
 } from 'lucide-react';
 import { type ChangeEvent, type DragEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import markUrl from '../assets/loopline-mark.svg';
-import { fetchStatus, sendFile, startReceiver } from '../lib/backendClient';
+import { fetchFiles, fetchStatus, sendFile, startReceiver } from '../lib/backendClient';
 import {
   type BackendStatus,
+  type FileKind,
   type TransferRecord,
+  type TransferFileEntry,
   formatBytes,
+  getFilePreviewKind,
   getTransferPercent,
   isAllowedPeerAddress,
 } from '../lib/transferModel';
@@ -40,6 +50,12 @@ export function HomeView() {
   const [peerHost, setPeerHost] = useState('127.0.0.1');
   const [peerPort, setPeerPort] = useState(8788);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileKind, setFileKind] = useState<FileKind>('received');
+  const [filesByKind, setFilesByKind] = useState<Record<FileKind, TransferFileEntry[]>>({
+    received: [],
+    sent: [],
+  });
+  const [selectedVaultFile, setSelectedVaultFile] = useState<TransferFileEntry | null>(null);
   const [dragging, setDragging] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -59,18 +75,44 @@ export function HomeView() {
     }
   }, []);
 
+  const refreshFiles = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const [received, sent] = await Promise.all([fetchFiles('received', signal), fetchFiles('sent', signal)]);
+      setFilesByKind({ received, sent });
+    } catch {
+      setFilesByKind({ received: [], sent: [] });
+    }
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     void refreshStatus(controller.signal);
+    void refreshFiles(controller.signal);
     const timer = window.setInterval(() => {
       void refreshStatus(controller.signal);
+      void refreshFiles(controller.signal);
     }, 1200);
 
     return () => {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [refreshStatus]);
+  }, [refreshFiles, refreshStatus]);
+
+  useEffect(() => {
+    const activeFiles = filesByKind[fileKind];
+    if (activeFiles.length === 0) {
+      setSelectedVaultFile(null);
+      return;
+    }
+    if (
+      !selectedVaultFile ||
+      selectedVaultFile.kind !== fileKind ||
+      !activeFiles.some((entry) => entry.name === selectedVaultFile.name)
+    ) {
+      setSelectedVaultFile(activeFiles[0]);
+    }
+  }, [fileKind, filesByKind, selectedVaultFile]);
 
   const transfers = status?.transfers ?? [];
   const latestTransfer = transfers[0];
@@ -128,6 +170,7 @@ export function HomeView() {
       setUploadPercent(100);
       setNotice({ tone: 'good', text: 'Transfer delivered' });
       await refreshStatus();
+      await refreshFiles();
     } catch (error) {
       setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Transfer failed' });
     } finally {
@@ -268,9 +311,139 @@ export function HomeView() {
               )}
             </div>
           </section>
+
+          <FileVault
+            activeKind={fileKind}
+            filesByKind={filesByKind}
+            selectedFile={selectedVaultFile}
+            onKindChange={setFileKind}
+            onSelectFile={setSelectedVaultFile}
+            onRefresh={() => void refreshFiles()}
+          />
         </div>
       </section>
     </main>
+  );
+}
+
+function FileVault({
+  activeKind,
+  filesByKind,
+  selectedFile,
+  onKindChange,
+  onSelectFile,
+  onRefresh,
+}: {
+  activeKind: FileKind;
+  filesByKind: Record<FileKind, TransferFileEntry[]>;
+  selectedFile: TransferFileEntry | null;
+  onKindChange: (kind: FileKind) => void;
+  onSelectFile: (file: TransferFileEntry) => void;
+  onRefresh: () => void;
+}) {
+  const activeFiles = filesByKind[activeKind];
+
+  return (
+    <section className="file-vault-panel" aria-labelledby="file-vault-heading">
+      <div className="vault-toolbar">
+        <div className="section-heading vault-title">
+          <FolderOpen size={18} />
+          <h2 id="file-vault-heading">File vault</h2>
+        </div>
+
+        <div className="vault-tabs" aria-label="File direction">
+          <button type="button" aria-pressed={activeKind === 'received'} onClick={() => onKindChange('received')}>
+            <Download size={16} />
+            <span>Received</span>
+            <strong>{filesByKind.received.length}</strong>
+          </button>
+          <button type="button" aria-pressed={activeKind === 'sent'} onClick={() => onKindChange('sent')}>
+            <UploadCloud size={16} />
+            <span>Sent</span>
+            <strong>{filesByKind.sent.length}</strong>
+          </button>
+          <button className="icon-action" type="button" aria-label="Refresh files" onClick={onRefresh}>
+            <RefreshCw size={16} />
+          </button>
+        </div>
+      </div>
+
+      <div className="vault-grid">
+        <div className="vault-list" aria-label={`${activeKind} files`}>
+          {activeFiles.length > 0 ? (
+            activeFiles.map((file) => (
+              <button
+                key={`${file.kind}-${file.name}`}
+                type="button"
+                className={`vault-file ${selectedFile?.kind === file.kind && selectedFile.name === file.name ? 'active' : ''}`}
+                onClick={() => onSelectFile(file)}
+              >
+                <FileGlyph file={file} />
+                <span>
+                  <strong>{file.name}</strong>
+                  <small>{formatBytes(file.size)}</small>
+                </span>
+                <Eye size={15} />
+              </button>
+            ))
+          ) : (
+            <div className="empty-vault">
+              <FolderOpen size={22} />
+              <span>No {activeKind} files yet</span>
+            </div>
+          )}
+        </div>
+
+        <FilePreview file={selectedFile} />
+      </div>
+    </section>
+  );
+}
+
+function FileGlyph({ file }: { file: TransferFileEntry }) {
+  const kind = getFilePreviewKind(file.name, file.contentType);
+  if (kind === 'image') return <ImageIcon size={18} />;
+  if (kind === 'video') return <Film size={18} />;
+  if (kind === 'audio') return <Music size={18} />;
+  return <FileText size={18} />;
+}
+
+function FilePreview({ file }: { file: TransferFileEntry | null }) {
+  if (!file) {
+    return (
+      <div className="preview-stage empty-preview">
+        <FolderOpen size={34} />
+        <span>Select a file to preview it here</span>
+      </div>
+    );
+  }
+
+  const previewKind = getFilePreviewKind(file.name, file.contentType);
+
+  return (
+    <div className="preview-stage">
+      <div className="preview-header">
+        <div>
+          <span className="mono-label">{file.kind}</span>
+          <strong>{file.name}</strong>
+        </div>
+        <span>{formatBytes(file.size)}</span>
+      </div>
+
+      <div className="preview-body">
+        {previewKind === 'image' ? <img src={file.url} alt={file.name} /> : null}
+        {previewKind === 'video' ? <video src={file.url} controls /> : null}
+        {previewKind === 'audio' ? <audio src={file.url} controls /> : null}
+        {previewKind === 'pdf' || previewKind === 'text' ? <iframe title={file.name} src={file.url} /> : null}
+        {previewKind === 'unsupported' ? (
+          <div className="unsupported-preview">
+            <FileText size={36} />
+            <strong>Preview unavailable</strong>
+            <span>This file is stored locally, but the browser cannot render this format inline.</span>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

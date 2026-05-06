@@ -17,6 +17,15 @@ std::string trim_copy(std::string value) {
   return value;
 }
 
+std::string lower_copy(std::string value) {
+  for (char& ch : value) {
+    if (ch >= 'A' && ch <= 'Z') {
+      ch = static_cast<char>(ch - 'A' + 'a');
+    }
+  }
+  return value;
+}
+
 }  // namespace
 
 std::string format_bytes(std::uint64_t bytes) {
@@ -41,6 +50,28 @@ std::string format_bytes(std::uint64_t bytes) {
   }
   out << ' ' << units[unit_index];
   return out.str();
+}
+
+std::string content_type_for_file(const std::string& file_name) {
+  const std::string name = lower_copy(file_name);
+  const auto dot = name.find_last_of('.');
+  const std::string extension = dot == std::string::npos ? "" : name.substr(dot + 1);
+
+  if (extension == "png") return "image/png";
+  if (extension == "jpg" || extension == "jpeg") return "image/jpeg";
+  if (extension == "gif") return "image/gif";
+  if (extension == "webp") return "image/webp";
+  if (extension == "svg") return "image/svg+xml";
+  if (extension == "pdf") return "application/pdf";
+  if (extension == "txt" || extension == "log" || extension == "md") return "text/plain; charset=utf-8";
+  if (extension == "csv") return "text/csv; charset=utf-8";
+  if (extension == "json") return "application/json; charset=utf-8";
+  if (extension == "mp4") return "video/mp4";
+  if (extension == "webm") return "video/webm";
+  if (extension == "mp3") return "audio/mpeg";
+  if (extension == "wav") return "audio/wav";
+  if (extension == "ogg") return "audio/ogg";
+  return "application/octet-stream";
 }
 
 std::string safe_file_name(const std::string& input) {

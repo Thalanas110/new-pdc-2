@@ -14,6 +14,7 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -64,6 +65,7 @@ struct AppState {
   std::mutex mutex;
   std::vector<TransferRecord> transfers;
   std::filesystem::path receive_dir;
+  std::filesystem::path sent_dir;
   std::string node_id = transfer::make_transfer_id();
   std::string bind_host = "127.0.0.1";
   std::string advertised_host = "127.0.0.1";
@@ -173,6 +175,22 @@ std::string url_decode(const std::string& input) {
   return output;
 }
 
+std::string url_encode(const std::string& input) {
+  std::ostringstream output;
+  output << std::hex << std::uppercase;
+  for (const unsigned char ch : input) {
+    const bool safe = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                      (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
+                      ch == '.' || ch == '~';
+    if (safe) {
+      output << static_cast<char>(ch);
+    } else {
+      output << '%' << std::setw(2) << std::setfill('0') << static_cast<int>(ch);
+    }
+  }
+  return output.str();
+}
+
 std::string query_value(const std::string& target, const std::string& key) {
   const auto question = target.find('?');
   if (question == std::string::npos) {
@@ -230,6 +248,7 @@ std::string status_json(AppState& state) {
   out << "\"httpPort\":" << state.http_port << ',';
   out << "\"transferPort\":" << state.transfer_port << ',';
   out << "\"receiveDir\":\"" << transfer::json_escape(state.receive_dir.string()) << "\",";
+  out << "\"sentDir\":\"" << transfer::json_escape(state.sent_dir.string()) << "\",";
   out << "\"listenerActive\":" << (state.listener_active.load() ? "true" : "false") << ',';
   out << "\"transfers\":[";
   for (std::size_t index = 0; index < state.transfers.size(); ++index) {
@@ -290,6 +309,54 @@ std::filesystem::path unique_received_path(const std::filesystem::path& director
   }
 
   return directory / (transfer::make_transfer_id() + "-" + file_name);
+}
+
+std::optional<std::filesystem::path> directory_for_kind(AppState& state, const std::string& kind) {
+  if (kind == "received") {
+    return state.receive_dir;
+  }
+  if (kind == "sent") {
+    return state.sent_dir;
+  }
+  return std::nullopt;
+}
+
+std::string file_list_json(AppState& state, const std::string& kind) {
+  const auto directory = directory_for_kind(state, kind);
+  if (!directory) {
+    return "{\"ok\":false,\"error\":\"Invalid file kind\"}";
+  }
+
+  std::filesystem::create_directories(*directory);
+  std::vector<std::filesystem::directory_entry> entries;
+  for (const auto& entry : std::filesystem::directory_iterator(*directory)) {
+    if (entry.is_regular_file()) {
+      entries.push_back(entry);
+    }
+  }
+
+  std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
+    return left.last_write_time() > right.last_write_time();
+  });
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"kind\":\"" << transfer::json_escape(kind) << "\",\"files\":[";
+  for (std::size_t index = 0; index < entries.size(); ++index) {
+    const auto& entry = entries[index];
+    const std::string name = entry.path().filename().string();
+    if (index > 0) {
+      out << ',';
+    }
+    out << "{\"kind\":\"" << transfer::json_escape(kind) << "\",";
+    out << "\"name\":\"" << transfer::json_escape(name) << "\",";
+    out << "\"size\":" << entry.file_size() << ',';
+    out << "\"modifiedAt\":\"" << entry.last_write_time().time_since_epoch().count() << "\",";
+    out << "\"contentType\":\"" << transfer::json_escape(transfer::content_type_for_file(name)) << "\",";
+    out << "\"url\":\"/api/files/open?kind=" << transfer::json_escape(kind)
+        << "&name=" << transfer::json_escape(url_encode(name)) << "\"}";
+  }
+  out << "]}";
+  return out.str();
 }
 
 socket_t create_listener(const std::string& bind_host, int port) {
@@ -541,6 +608,48 @@ void send_json(socket_t client, int status, const std::string& status_text, cons
   send_response(client, status, status_text, "application/json", body);
 }
 
+void send_file_inline(AppState& state, socket_t client, const std::string& kind, const std::string& raw_name) {
+  const auto directory = directory_for_kind(state, kind);
+  if (!directory) {
+    send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Invalid file kind\"}");
+    return;
+  }
+
+  const std::string file_name = transfer::safe_file_name(raw_name);
+  const std::filesystem::path file_path = *directory / file_name;
+  if (!std::filesystem::exists(file_path) || !std::filesystem::is_regular_file(file_path)) {
+    send_json(client, 404, "Not Found", "{\"ok\":false,\"error\":\"File not found\"}");
+    return;
+  }
+
+  std::ifstream input(file_path, std::ios::binary);
+  if (!input) {
+    send_json(client, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"Could not open file\"}");
+    return;
+  }
+
+  const auto size = std::filesystem::file_size(file_path);
+  std::ostringstream headers;
+  headers << "HTTP/1.1 200 OK\r\n";
+  headers << "Content-Type: " << transfer::content_type_for_file(file_name) << "\r\n";
+  headers << "Content-Length: " << size << "\r\n";
+  headers << "Content-Disposition: inline; filename=\"" << transfer::json_escape(file_name) << "\"\r\n";
+  headers << "Connection: close\r\n";
+  headers << "Access-Control-Allow-Origin: *\r\n\r\n";
+  if (!send_text(client, headers.str())) {
+    return;
+  }
+
+  std::vector<char> buffer(64 * 1024);
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const std::streamsize read = input.gcount();
+    if (read > 0 && !send_all(client, buffer.data(), static_cast<std::size_t>(read))) {
+      return;
+    }
+  }
+}
+
 void send_file_to_peer(AppState& state,
                        socket_t client,
                        const std::string& host,
@@ -561,6 +670,13 @@ void send_file_to_peer(AppState& state,
   record.size = static_cast<std::uint64_t>(body.size());
   record.message = "Opening peer socket";
   const std::string id = add_transfer(state, record);
+
+  std::filesystem::create_directories(state.sent_dir);
+  const std::filesystem::path sent_path = unique_received_path(state.sent_dir, file_name);
+  std::ofstream sent_copy(sent_path, std::ios::binary);
+  if (sent_copy) {
+    sent_copy.write(body.data(), static_cast<std::streamsize>(body.size()));
+  }
 
   const socket_t peer = connect_to_peer(host, port);
   if (peer == invalid_socket) {
@@ -612,6 +728,17 @@ void handle_http_client(AppState& state, socket_t client) {
     send_json(client, 200, "OK", "{\"ok\":true}");
   } else if (request.method == "GET" && route == "/api/status") {
     send_json(client, 200, "OK", status_json(state));
+  } else if (request.method == "GET" && route == "/api/files") {
+    const std::string kind = query_value(request.target, "kind").empty() ? "received" : query_value(request.target, "kind");
+    if (!directory_for_kind(state, kind)) {
+      send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Invalid file kind\"}");
+    } else {
+      send_json(client, 200, "OK", file_list_json(state, kind));
+    }
+  } else if (request.method == "GET" && route == "/api/files/open") {
+    const std::string kind = query_value(request.target, "kind").empty() ? "received" : query_value(request.target, "kind");
+    const std::string name = query_value(request.target, "name");
+    send_file_inline(state, client, kind, name);
   } else if (request.method == "POST" && route == "/api/receive/start") {
     const std::string port_value = query_value(request.target, "port");
     const int requested_port = port_value.empty() ? state.transfer_port : parse_int(port_value).value_or(state.transfer_port);
@@ -696,7 +823,9 @@ int main(int argc, char* argv[]) {
   }
   state.allow_remote_peers = env_flag("P2P_ALLOW_REMOTE", false);
   state.receive_dir = env_value("P2P_RECEIVE_DIR", (std::filesystem::current_path() / "backend" / "received").string());
+  state.sent_dir = env_value("P2P_SENT_DIR", (std::filesystem::current_path() / "backend" / "sent").string());
   std::filesystem::create_directories(state.receive_dir);
+  std::filesystem::create_directories(state.sent_dir);
 
   std::thread receiver(transfer_listener, std::ref(state));
   receiver.detach();
@@ -705,6 +834,7 @@ int main(int argc, char* argv[]) {
   std::cout << "Bind host: " << state.bind_host
             << " | remote peers: " << (state.allow_remote_peers ? "enabled" : "disabled") << '\n';
   std::cout << "Received files: " << state.receive_dir.string() << '\n';
+  std::cout << "Sent files: " << state.sent_dir.string() << '\n';
   http_server(state);
 
 #ifdef _WIN32

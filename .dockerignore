@@ -3,6 +3,7 @@ dist
 backend/*.exe
 backend/tests/*.exe
 backend/received
+backend/sent
 *.log
 *.err
 .localhost-pids.json

@@ -67,6 +67,40 @@ export function buildPeerUrl(host: string, port: number): string {
   return `http://${normalizedHost}:${port}`;
 }
 
+export type FileKind = 'received' | 'sent';
+export type FilePreviewKind = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'unsupported';
+
+export type TransferFileEntry = {
+  kind: FileKind;
+  name: string;
+  size: number;
+  modifiedAt: string;
+  contentType: string;
+  url: string;
+};
+
+export function getFilePreviewKind(fileName: string, contentType: string): FilePreviewKind {
+  const type = contentType.toLowerCase();
+  const extension = fileName.toLowerCase().split('.').pop() ?? '';
+
+  if (type.startsWith('image/')) {
+    return 'image';
+  }
+  if (type.startsWith('video/')) {
+    return 'video';
+  }
+  if (type.startsWith('audio/')) {
+    return 'audio';
+  }
+  if (type === 'application/pdf' || extension === 'pdf') {
+    return 'pdf';
+  }
+  if (type.startsWith('text/') || ['txt', 'log', 'csv', 'json', 'md'].includes(extension)) {
+    return 'text';
+  }
+  return 'unsupported';
+}
+
 export type TransferStatus = 'queued' | 'transferring' | 'complete' | 'failed';
 
 export type TransferRecord = {
@@ -88,6 +122,7 @@ export type BackendStatus = {
   httpPort: number;
   transferPort: number;
   receiveDir: string;
+  sentDir?: string;
   listenerActive: boolean;
   allowRemotePeers?: boolean;
   bindHost?: string;

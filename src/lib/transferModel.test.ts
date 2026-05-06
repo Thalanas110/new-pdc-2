@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPeerUrl,
   formatBytes,
+  getFilePreviewKind,
   getTransferPercent,
   isAllowedPeerAddress,
   isLocalhostAddress,
@@ -47,5 +48,14 @@ describe('transfer model', () => {
   it('builds a stable receiver URL for localhost peers', () => {
     expect(buildPeerUrl('127.0.0.1', 8787)).toBe('http://127.0.0.1:8787');
     expect(buildPeerUrl('localhost', 9000)).toBe('http://localhost:9000');
+  });
+
+  it('chooses inline preview modes from file metadata', () => {
+    expect(getFilePreviewKind('photo.png', 'image/png')).toBe('image');
+    expect(getFilePreviewKind('paper.pdf', 'application/pdf')).toBe('pdf');
+    expect(getFilePreviewKind('notes.txt', 'text/plain')).toBe('text');
+    expect(getFilePreviewKind('clip.mp4', 'video/mp4')).toBe('video');
+    expect(getFilePreviewKind('voice.mp3', 'audio/mpeg')).toBe('audio');
+    expect(getFilePreviewKind('archive.zip', 'application/zip')).toBe('unsupported');
   });
 });

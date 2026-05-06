@@ -34,6 +34,29 @@ Received files are saved on the host in:
 backend\received
 ```
 
+Outgoing file copies are saved on the host in:
+
+```text
+backend\sent
+```
+
+## Viewing Files In The App
+
+Use the **File vault** panel at the bottom of the Loopline UI.
+
+- **Received** shows files this device received.
+- **Sent** shows local copies of files this device sent.
+- Click a file to preview it without leaving the page.
+
+Inline preview works for common browser-renderable formats:
+
+- Images: `png`, `jpg`, `gif`, `webp`, `svg`
+- Text: `txt`, `log`, `md`, `csv`, `json`
+- Media: `mp4`, `webm`, `mp3`, `wav`, `ogg`
+- PDF: `pdf`
+
+Other formats are still saved in `backend\received` or `backend\sent`, but the browser may not be able to render them inline.
+
 ## Two-Laptop Phone Hotspot Setup
 
 Example:
@@ -350,6 +373,7 @@ P2P_HTTP_PORT=8787
 P2P_TRANSFER_PORT=8788
 P2P_ALLOW_REMOTE=1
 P2P_RECEIVE_DIR=/data/received
+P2P_SENT_DIR=/data/sent
 ```
 
 ## Mental Model

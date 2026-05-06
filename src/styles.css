@@ -154,7 +154,8 @@ h2 {
 
 .node-panel,
 .send-panel,
-.ledger-panel {
+.ledger-panel,
+.file-vault-panel {
   min-width: 0;
   padding: 22px;
   background: var(--panel);
@@ -497,6 +498,214 @@ input:focus {
   border: 1px dashed rgba(24, 33, 28, 0.2);
 }
 
+.file-vault-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 16px;
+}
+
+.vault-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.vault-title {
+  margin-bottom: 0;
+}
+
+.vault-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vault-tabs button,
+.icon-action {
+  min-height: 38px;
+  border: 1px solid rgba(24, 33, 28, 0.18);
+  background: #fbf7ec;
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 11px;
+}
+
+.vault-tabs button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--text);
+}
+
+.vault-tabs strong {
+  min-width: 24px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: rgba(39, 198, 154, 0.16);
+  color: var(--green-dark);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 0.72rem;
+}
+
+.vault-tabs button[aria-pressed="true"] strong {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--text);
+}
+
+.icon-action {
+  width: 38px;
+  padding: 0;
+}
+
+.vault-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.4fr);
+  min-height: 380px;
+  border: 1px solid rgba(24, 33, 28, 0.14);
+  background: rgba(24, 33, 28, 0.1);
+}
+
+.vault-list {
+  min-width: 0;
+  max-height: 520px;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  background: rgba(24, 33, 28, 0.12);
+}
+
+.vault-file {
+  width: 100%;
+  min-height: 66px;
+  border: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  text-align: left;
+  background: #fbf7ec;
+  color: var(--ink);
+}
+
+.vault-file:hover,
+.vault-file.active {
+  background: #efe4ce;
+}
+
+.vault-file.active {
+  box-shadow: inset 4px 0 0 var(--green-dark);
+}
+
+.vault-file > svg:first-child {
+  color: var(--blue);
+}
+
+.vault-file span {
+  min-width: 0;
+}
+
+.vault-file strong,
+.vault-file small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-file small {
+  margin-top: 4px;
+  color: var(--coal-muted);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+}
+
+.empty-vault,
+.empty-preview,
+.unsupported-preview {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  color: var(--coal-muted);
+  text-align: center;
+}
+
+.preview-stage {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: var(--ink);
+  color: var(--text);
+}
+
+.preview-header {
+  min-height: 70px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid rgba(248, 243, 232, 0.12);
+}
+
+.preview-header strong {
+  display: block;
+  max-width: 440px;
+  margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-header > span {
+  flex: 0 0 auto;
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  color: var(--amber);
+}
+
+.preview-body {
+  min-height: 310px;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background:
+    linear-gradient(90deg, rgba(248, 243, 232, 0.05) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(248, 243, 232, 0.05) 1px, transparent 1px),
+    #111613;
+  background-size: 22px 22px;
+}
+
+.preview-body img,
+.preview-body video {
+  max-width: 100%;
+  max-height: 430px;
+  object-fit: contain;
+}
+
+.preview-body audio {
+  width: min(460px, 100%);
+}
+
+.preview-body iframe {
+  width: 100%;
+  height: 430px;
+  border: 1px solid rgba(248, 243, 232, 0.16);
+  background: #fff;
+}
+
+.unsupported-preview {
+  max-width: 340px;
+}
+
+.unsupported-preview strong {
+  color: var(--text);
+}
+
 .spin {
   animation: spin 900ms linear infinite;
 }
@@ -515,6 +724,10 @@ input:focus {
   .command-surface {
     min-height: auto;
   }
+
+  .vault-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -529,6 +742,16 @@ input:focus {
 
   .status-pill {
     width: 100%;
+  }
+
+  .vault-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .vault-tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr 38px;
   }
 
   .peer-grid,
