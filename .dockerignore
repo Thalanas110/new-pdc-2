@@ -1,0 +1,10 @@
+node_modules
+dist
+backend/*.exe
+backend/tests/*.exe
+backend/received
+*.log
+*.err
+.localhost-pids.json
+.git
+.gitignore

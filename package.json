@@ -1,0 +1,35 @@
+{
+  "name": "localhost-p2p-transfer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:backend": "g++ -std=c++20 -Wall -Wextra -Werror -I backend/src backend/src/main.cpp backend/src/transfer_core.cpp -o backend/p2p_server.exe -lws2_32",
+    "dev:backend": "npm.cmd run build:backend && backend\\p2p_server.exe",
+    "start:local": "node scripts/start-localhost.mjs",
+    "docker:build": "docker compose build",
+    "docker:up": "docker compose up --build",
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "vitest run",
+    "test:backend": "g++ -std=c++20 -Wall -Wextra -Werror -I backend/src backend/tests/transfer_core_test.cpp backend/src/transfer_core.cpp -o backend/tests/transfer_core_test.exe && backend\\tests\\transfer_core_test.exe"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "latest",
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "jsdom": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}
