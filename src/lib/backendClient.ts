@@ -1,4 +1,4 @@
-import type { BackendStatus, FileKind, TransferFileEntry } from './transferModel';
+import type { BackendStatus, FileKind, SyncPeer, TransferFileEntry } from './transferModel';
 import { getTransferPercent } from './transferModel';
 
 export async function fetchStatus(signal?: AbortSignal): Promise<BackendStatus> {
@@ -26,6 +26,34 @@ export async function fetchFiles(kind: FileKind, signal?: AbortSignal): Promise<
   }
   const payload = (await response.json()) as { files?: TransferFileEntry[] };
   return payload.files ?? [];
+}
+
+export async function addSyncPeer(peer: SyncPeer): Promise<void> {
+  const params = new URLSearchParams({
+    host: peer.host,
+    port: String(peer.port),
+  });
+  const response = await fetch(`/api/sync/peers?${params.toString()}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `Sync peer request failed: ${response.status}`);
+  }
+}
+
+export async function removeSyncPeer(peer: SyncPeer): Promise<void> {
+  const params = new URLSearchParams({
+    host: peer.host,
+    port: String(peer.port),
+  });
+  const response = await fetch(`/api/sync/peers/remove?${params.toString()}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `Sync peer remove failed: ${response.status}`);
+  }
 }
 
 export type SendFileOptions = {

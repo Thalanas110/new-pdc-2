@@ -5,6 +5,8 @@ backend/*.exe
 backend/tests/*.exe
 backend/received/*
 backend/sent/*
+shared/*
+!shared/.gitkeep
 
 *.log
 *.err

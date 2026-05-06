@@ -1,5 +1,6 @@
 #include <cassert>
 #include <iostream>
+#include <optional>
 #include <string>
 
 #include "transfer_core.hpp"
@@ -8,6 +9,8 @@ int main() {
   using transfer::format_bytes;
   using transfer::content_type_for_file;
   using transfer::is_allowed_peer;
+  using transfer::parse_peer_endpoint;
+  using transfer::peer_endpoint_key;
   using transfer::safe_file_name;
 
   assert(format_bytes(0) == "0 B");
@@ -37,6 +40,17 @@ int main() {
   assert(content_type_for_file("clip.mp4") == "video/mp4");
   assert(content_type_for_file("voice.mp3") == "audio/mpeg");
   assert(content_type_for_file("archive.zip") == "application/octet-stream");
+
+  const auto peer = parse_peer_endpoint("10.113.71.244:8788", 8788);
+  assert(peer.has_value());
+  assert(peer->host == "10.113.71.244");
+  assert(peer->port == 8788);
+  assert(peer_endpoint_key(peer->host, peer->port) == "10.113.71.244:8788");
+  const auto fallback_peer = parse_peer_endpoint("192.168.43.25", 8788);
+  assert(fallback_peer.has_value());
+  assert(fallback_peer->port == 8788);
+  assert(!parse_peer_endpoint("8.8.8.8:8788", 8788).has_value());
+  assert(!parse_peer_endpoint("10.0.0.4:99999", 8788).has_value());
 
   std::cout << "transfer_core_test passed\n";
   return 0;

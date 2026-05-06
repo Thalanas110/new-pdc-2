@@ -31,6 +31,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -61,11 +62,32 @@ struct TransferRecord {
   std::uint64_t bytes_transferred = 0;
 };
 
+struct SharedFileProbe {
+  std::uint64_t size = 0;
+  long long modified_tick = 0;
+
+  bool operator==(const SharedFileProbe& other) const {
+    return size == other.size && modified_tick == other.modified_tick;
+  }
+};
+
+struct SharedFileSignature {
+  std::uint64_t size = 0;
+  std::uint64_t hash = 0;
+
+  bool operator==(const SharedFileSignature& other) const {
+    return size == other.size && hash == other.hash;
+  }
+};
+
 struct AppState {
   std::mutex mutex;
   std::vector<TransferRecord> transfers;
   std::filesystem::path receive_dir;
   std::filesystem::path sent_dir;
+  std::filesystem::path shared_dir;
+  std::vector<transfer::PeerEndpoint> sync_peers;
+  std::map<std::string, SharedFileSignature> synced_shared_versions;
   std::string node_id = transfer::make_transfer_id();
   std::string bind_host = "127.0.0.1";
   std::string advertised_host = "127.0.0.1";
@@ -105,6 +127,48 @@ std::string lower_copy(std::string value) {
     }
   }
   return value;
+}
+
+std::uint64_t fnv1a_update(std::uint64_t hash, const char* data, std::size_t size) {
+  constexpr std::uint64_t prime = 1099511628211ull;
+  for (std::size_t index = 0; index < size; ++index) {
+    hash ^= static_cast<unsigned char>(data[index]);
+    hash *= prime;
+  }
+  return hash;
+}
+
+std::optional<std::uint64_t> hash_file(const std::filesystem::path& file_path) {
+  std::ifstream input(file_path, std::ios::binary);
+  if (!input) {
+    return std::nullopt;
+  }
+
+  std::uint64_t hash = 14695981039346656037ull;
+  std::vector<char> buffer(64 * 1024);
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const std::streamsize read = input.gcount();
+    if (read > 0) {
+      hash = fnv1a_update(hash, buffer.data(), static_cast<std::size_t>(read));
+    }
+  }
+  return hash;
+}
+
+std::optional<SharedFileSignature> shared_file_signature(const std::filesystem::path& file_path) {
+  std::error_code error;
+  const auto size = std::filesystem::file_size(file_path, error);
+  if (error) {
+    return std::nullopt;
+  }
+
+  const auto hash = hash_file(file_path);
+  if (!hash) {
+    return std::nullopt;
+  }
+
+  return SharedFileSignature{static_cast<std::uint64_t>(size), *hash};
 }
 
 std::optional<int> parse_int(const std::string& value) {
@@ -249,7 +313,17 @@ std::string status_json(AppState& state) {
   out << "\"transferPort\":" << state.transfer_port << ',';
   out << "\"receiveDir\":\"" << transfer::json_escape(state.receive_dir.string()) << "\",";
   out << "\"sentDir\":\"" << transfer::json_escape(state.sent_dir.string()) << "\",";
+  out << "\"sharedDir\":\"" << transfer::json_escape(state.shared_dir.string()) << "\",";
   out << "\"listenerActive\":" << (state.listener_active.load() ? "true" : "false") << ',';
+  out << "\"syncPeers\":[";
+  for (std::size_t index = 0; index < state.sync_peers.size(); ++index) {
+    if (index > 0) {
+      out << ',';
+    }
+    out << "{\"host\":\"" << transfer::json_escape(state.sync_peers[index].host) << "\",";
+    out << "\"port\":" << state.sync_peers[index].port << '}';
+  }
+  out << "],";
   out << "\"transfers\":[";
   for (std::size_t index = 0; index < state.transfers.size(); ++index) {
     if (index > 0) {
@@ -291,6 +365,56 @@ void update_transfer(AppState& state,
   }
 }
 
+std::string synced_shared_key(const transfer::PeerEndpoint& peer, const std::string& file_name) {
+  return transfer::peer_endpoint_key(peer.host, peer.port) + "|" + file_name;
+}
+
+std::vector<transfer::PeerEndpoint> sync_peers_snapshot(AppState& state) {
+  std::lock_guard<std::mutex> lock(state.mutex);
+  return state.sync_peers;
+}
+
+bool has_synced_shared_version(AppState& state,
+                               const transfer::PeerEndpoint& peer,
+                               const std::string& file_name,
+                               const SharedFileSignature& signature) {
+  std::lock_guard<std::mutex> lock(state.mutex);
+  const auto found = state.synced_shared_versions.find(synced_shared_key(peer, file_name));
+  return found != state.synced_shared_versions.end() && found->second == signature;
+}
+
+void mark_synced_shared_version(AppState& state,
+                                const transfer::PeerEndpoint& peer,
+                                const std::string& file_name,
+                                const SharedFileSignature& signature) {
+  std::lock_guard<std::mutex> lock(state.mutex);
+  state.synced_shared_versions[synced_shared_key(peer, file_name)] = signature;
+}
+
+bool add_sync_peer(AppState& state, const transfer::PeerEndpoint& peer) {
+  std::lock_guard<std::mutex> lock(state.mutex);
+  const auto key = transfer::peer_endpoint_key(peer.host, peer.port);
+  const auto exists = std::find_if(state.sync_peers.begin(), state.sync_peers.end(), [&](const auto& existing) {
+    return transfer::peer_endpoint_key(existing.host, existing.port) == key;
+  });
+  if (exists != state.sync_peers.end()) {
+    return false;
+  }
+  state.sync_peers.push_back(peer);
+  return true;
+}
+
+bool remove_sync_peer(AppState& state, const transfer::PeerEndpoint& peer) {
+  std::lock_guard<std::mutex> lock(state.mutex);
+  const auto key = transfer::peer_endpoint_key(peer.host, peer.port);
+  const auto old_size = state.sync_peers.size();
+  state.sync_peers.erase(std::remove_if(state.sync_peers.begin(), state.sync_peers.end(), [&](const auto& existing) {
+                           return transfer::peer_endpoint_key(existing.host, existing.port) == key;
+                         }),
+                         state.sync_peers.end());
+  return state.sync_peers.size() != old_size;
+}
+
 std::filesystem::path unique_received_path(const std::filesystem::path& directory, const std::string& file_name) {
   std::filesystem::path candidate = directory / file_name;
   if (!std::filesystem::exists(candidate)) {
@@ -317,6 +441,9 @@ std::optional<std::filesystem::path> directory_for_kind(AppState& state, const s
   }
   if (kind == "sent") {
     return state.sent_dir;
+  }
+  if (kind == "shared") {
+    return state.shared_dir;
   }
   return std::nullopt;
 }
@@ -421,6 +548,192 @@ socket_t connect_to_peer(const std::string& host, int port) {
   return connected;
 }
 
+bool send_shared_delete_to_peer(AppState& state, const transfer::PeerEndpoint& peer, const std::string& file_name) {
+  TransferRecord record;
+  record.direction = "outgoing";
+  record.file_name = file_name;
+  record.status = "transferring";
+  record.peer = transfer::peer_endpoint_key(peer.host, peer.port);
+  record.size = 0;
+  record.message = "Removing shared file on peer";
+  const std::string id = add_transfer(state, record);
+
+  const socket_t connected = connect_to_peer(peer.host, peer.port);
+  if (connected == invalid_socket) {
+    update_transfer(state, id, 0, "failed", "Could not connect to sync peer");
+    return false;
+  }
+
+  const std::string header = "LOOPLINE-SHARED/1\nDELETE\n" + file_name + "\n0\n" + state.node_id + "\n" +
+                             state.advertised_host + "\n" + std::to_string(state.transfer_port) + "\n\n";
+  if (!send_text(connected, header)) {
+    close_socket(connected);
+    update_transfer(state, id, 0, "failed", "Could not send delete message");
+    return false;
+  }
+
+  close_socket(connected);
+  update_transfer(state, id, 0, "complete", "Shared delete sent to " + record.peer);
+  return true;
+}
+
+bool send_shared_file_to_peer(AppState& state,
+                              const transfer::PeerEndpoint& peer,
+                              const std::string& file_name,
+                              const std::filesystem::path& file_path,
+                              const SharedFileSignature& signature) {
+  if (has_synced_shared_version(state, peer, file_name, signature)) {
+    return true;
+  }
+
+  std::ifstream input(file_path, std::ios::binary);
+  if (!input) {
+    return false;
+  }
+
+  TransferRecord record;
+  record.direction = "outgoing";
+  record.file_name = file_name;
+  record.status = "transferring";
+  record.peer = transfer::peer_endpoint_key(peer.host, peer.port);
+  record.size = signature.size;
+  record.message = "Syncing shared file";
+  const std::string id = add_transfer(state, record);
+
+  const socket_t connected = connect_to_peer(peer.host, peer.port);
+  if (connected == invalid_socket) {
+    update_transfer(state, id, 0, "failed", "Could not connect to sync peer");
+    return false;
+  }
+
+  const std::string header = "LOOPLINE-SHARED/1\nPUT\n" + file_name + "\n" + std::to_string(signature.size) +
+                             "\n" + state.node_id + "\n" + state.advertised_host + "\n" +
+                             std::to_string(state.transfer_port) + "\n\n";
+  if (!send_text(connected, header)) {
+    close_socket(connected);
+    update_transfer(state, id, 0, "failed", "Could not send shared header");
+    return false;
+  }
+
+  std::uint64_t sent = 0;
+  std::vector<char> buffer(64 * 1024);
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const std::streamsize read = input.gcount();
+    if (read <= 0) {
+      break;
+    }
+    if (!send_all(connected, buffer.data(), static_cast<std::size_t>(read))) {
+      close_socket(connected);
+      update_transfer(state, id, sent, "failed", "Peer closed shared sync");
+      return false;
+    }
+    sent += static_cast<std::uint64_t>(read);
+    update_transfer(state, id, sent, "transferring", "Shared " + transfer::format_bytes(sent));
+  }
+
+  if (sent != signature.size) {
+    close_socket(connected);
+    update_transfer(state, id, sent, "failed", "Shared file changed while sending");
+    return false;
+  }
+
+  close_socket(connected);
+  mark_synced_shared_version(state, peer, file_name, signature);
+  update_transfer(state, id, sent, "complete", "Shared with " + record.peer);
+  return true;
+}
+
+std::map<std::string, SharedFileProbe> scan_shared_folder(const std::filesystem::path& directory) {
+  std::map<std::string, SharedFileProbe> files;
+  std::error_code error;
+  std::filesystem::create_directories(directory, error);
+  if (error) {
+    return files;
+  }
+
+  std::filesystem::directory_iterator iterator(directory, error);
+  const std::filesystem::directory_iterator end;
+  while (!error && iterator != end) {
+    const auto& entry = *iterator;
+    if (entry.is_regular_file(error) && !error) {
+      const std::string name = entry.path().filename().string();
+      if (name.rfind(".loopline-tmp-", 0) != 0) {
+        const auto size = entry.file_size(error);
+        const auto modified = entry.last_write_time(error);
+        if (!error) {
+          files[name] = SharedFileProbe{
+              static_cast<std::uint64_t>(size),
+              static_cast<long long>(modified.time_since_epoch().count()),
+          };
+        }
+      }
+    }
+    iterator.increment(error);
+  }
+  return files;
+}
+
+void shared_folder_watcher(AppState& state) {
+  std::map<std::string, SharedFileProbe> last_probe;
+  std::map<std::string, SharedFileSignature> known_versions;
+
+  while (state.running.load()) {
+    const auto current_probe = scan_shared_folder(state.shared_dir);
+    const auto peers = sync_peers_snapshot(state);
+
+    for (const auto& known_version : known_versions) {
+      const auto& name = known_version.first;
+      if (current_probe.find(name) == current_probe.end()) {
+        for (const auto& peer : peers) {
+          send_shared_delete_to_peer(state, peer, name);
+        }
+      }
+    }
+
+    for (auto it = known_versions.begin(); it != known_versions.end();) {
+      if (current_probe.find(it->first) == current_probe.end()) {
+        it = known_versions.erase(it);
+      } else {
+        ++it;
+      }
+    }
+
+    for (const auto& [name, probe] : current_probe) {
+      const auto previous_probe = last_probe.find(name);
+      if (previous_probe == last_probe.end() || !(previous_probe->second == probe)) {
+        last_probe[name] = probe;
+        continue;
+      }
+
+      const std::filesystem::path file_path = state.shared_dir / name;
+      const auto signature = shared_file_signature(file_path);
+      if (!signature) {
+        continue;
+      }
+
+      const auto known = known_versions.find(name);
+      if (known == known_versions.end() || !(known->second == *signature)) {
+        known_versions[name] = *signature;
+      }
+
+      for (const auto& peer : peers) {
+        send_shared_file_to_peer(state, peer, name, file_path, *signature);
+      }
+    }
+
+    for (auto it = last_probe.begin(); it != last_probe.end();) {
+      if (current_probe.find(it->first) == current_probe.end()) {
+        it = last_probe.erase(it);
+      } else {
+        ++it;
+      }
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  }
+}
+
 bool read_line(socket_t socket, std::string& line) {
   line.clear();
   char ch = '\0';
@@ -440,14 +753,184 @@ bool read_line(socket_t socket, std::string& line) {
   return false;
 }
 
+std::optional<transfer::PeerEndpoint> source_peer_from_header(const std::string& host,
+                                                              const std::string& port,
+                                                              int fallback_port) {
+  if (host.empty()) {
+    return std::nullopt;
+  }
+  const std::string endpoint = host + ":" + (port.empty() ? std::to_string(fallback_port) : port);
+  return transfer::parse_peer_endpoint(endpoint, fallback_port);
+}
+
+void handle_incoming_shared_delete(AppState& state,
+                                   socket_t client,
+                                   const std::string& file_name,
+                                   const std::string& peer,
+                                   const std::optional<transfer::PeerEndpoint>& source_peer) {
+  const std::string safe_name = transfer::safe_file_name(file_name);
+  TransferRecord record;
+  record.direction = "incoming";
+  record.file_name = safe_name;
+  record.status = "transferring";
+  record.peer = peer;
+  record.size = 0;
+  record.message = "Removing shared file";
+  const std::string id = add_transfer(state, record);
+
+  std::error_code error;
+  std::filesystem::create_directories(state.shared_dir, error);
+  const std::filesystem::path destination = state.shared_dir / safe_name;
+  if (std::filesystem::exists(destination, error)) {
+    std::filesystem::remove(destination, error);
+  }
+
+  if (error) {
+    update_transfer(state, id, 0, "failed", "Could not remove shared file");
+  } else {
+    if (source_peer) {
+      mark_synced_shared_version(state, *source_peer, safe_name, SharedFileSignature{0, 0});
+    }
+    update_transfer(state, id, 0, "complete", "Removed from shared folder");
+  }
+  close_socket(client);
+}
+
+void handle_incoming_shared_put(AppState& state,
+                                socket_t client,
+                                const std::string& file_name,
+                                const std::string& size_line,
+                                const std::string& peer,
+                                const std::optional<transfer::PeerEndpoint>& source_peer) {
+  const auto parsed_size = parse_int(size_line);
+  if (!parsed_size || *parsed_size < 0) {
+    close_socket(client);
+    return;
+  }
+
+  const std::string safe_name = transfer::safe_file_name(file_name);
+  const std::uint64_t total_size = static_cast<std::uint64_t>(*parsed_size);
+  TransferRecord record;
+  record.direction = "incoming";
+  record.file_name = safe_name;
+  record.status = "transferring";
+  record.peer = peer;
+  record.size = total_size;
+  record.message = "Receiving shared file";
+  const std::string id = add_transfer(state, record);
+
+  std::error_code error;
+  std::filesystem::create_directories(state.shared_dir, error);
+  if (error) {
+    update_transfer(state, id, 0, "failed", "Could not create shared folder");
+    close_socket(client);
+    return;
+  }
+
+  const std::filesystem::path destination = state.shared_dir / safe_name;
+  const std::filesystem::path temp_path =
+      state.shared_dir / (".loopline-tmp-" + transfer::make_transfer_id() + "-" + safe_name);
+  std::filesystem::remove(temp_path, error);
+
+  std::ofstream output(temp_path, std::ios::binary);
+  if (!output) {
+    update_transfer(state, id, 0, "failed", "Could not open shared file");
+    close_socket(client);
+    return;
+  }
+
+  std::uint64_t hash = 14695981039346656037ull;
+  std::uint64_t received_total = 0;
+  std::vector<char> buffer(64 * 1024);
+  while (received_total < total_size) {
+    const auto remaining = static_cast<std::size_t>(std::min<std::uint64_t>(buffer.size(), total_size - received_total));
+    const int received = recv(client, buffer.data(), static_cast<int>(remaining), 0);
+    if (received <= 0) {
+      output.close();
+      std::filesystem::remove(temp_path, error);
+      update_transfer(state, id, received_total, "failed", "Connection closed early");
+      close_socket(client);
+      return;
+    }
+    output.write(buffer.data(), received);
+    hash = fnv1a_update(hash, buffer.data(), static_cast<std::size_t>(received));
+    received_total += static_cast<std::uint64_t>(received);
+    update_transfer(state, id, received_total, "transferring",
+                    "Shared " + transfer::format_bytes(received_total));
+  }
+  output.close();
+
+  const SharedFileSignature received_signature{received_total, hash};
+  const auto existing_signature = shared_file_signature(destination);
+  if (existing_signature && *existing_signature == received_signature) {
+    std::filesystem::remove(temp_path, error);
+    if (source_peer) {
+      mark_synced_shared_version(state, *source_peer, safe_name, received_signature);
+    }
+    update_transfer(state, id, received_total, "complete", "Shared file already current");
+    close_socket(client);
+    return;
+  }
+
+  std::filesystem::remove(destination, error);
+  error.clear();
+  std::filesystem::rename(temp_path, destination, error);
+  if (error) {
+    std::filesystem::remove(temp_path, error);
+    update_transfer(state, id, received_total, "failed", "Could not publish shared file");
+    close_socket(client);
+    return;
+  }
+
+  if (source_peer) {
+    mark_synced_shared_version(state, *source_peer, safe_name, received_signature);
+  }
+  update_transfer(state, id, received_total, "complete", "Saved to shared folder");
+  close_socket(client);
+}
+
 void handle_incoming_transfer(AppState& state, socket_t client, const std::string& peer) {
   std::string magic;
+  if (!read_line(client, magic)) {
+    close_socket(client);
+    return;
+  }
+
+  if (magic == "LOOPLINE-SHARED/1") {
+    std::string operation;
+    std::string file_name;
+    std::string size_line;
+    std::string source_node;
+    std::string source_host;
+    std::string source_port;
+    std::string blank;
+    if (!read_line(client, operation) || !read_line(client, file_name) || !read_line(client, size_line) ||
+        !read_line(client, source_node) || !read_line(client, source_host) || !read_line(client, source_port) ||
+        !read_line(client, blank)) {
+      close_socket(client);
+      return;
+    }
+
+    (void)source_node;
+    const auto source_peer = source_peer_from_header(source_host, source_port, state.transfer_port);
+    if (operation == "DELETE") {
+      handle_incoming_shared_delete(state, client, file_name, peer, source_peer);
+      return;
+    }
+    if (operation == "PUT") {
+      handle_incoming_shared_put(state, client, file_name, size_line, peer, source_peer);
+      return;
+    }
+
+    close_socket(client);
+    return;
+  }
+
   std::string file_name;
   std::string size_line;
   std::string blank;
-
-  if (!read_line(client, magic) || !read_line(client, file_name) || !read_line(client, size_line) ||
-      !read_line(client, blank) || magic != "LOOPLINE/1") {
+  if (!read_line(client, file_name) || !read_line(client, size_line) || !read_line(client, blank) ||
+      magic != "LOOPLINE/1") {
     close_socket(client);
     return;
   }
@@ -661,6 +1144,7 @@ void send_file_to_peer(AppState& state,
               "{\"ok\":false,\"error\":\"Only localhost and private LAN peers are allowed\"}");
     return;
   }
+  add_sync_peer(state, transfer::PeerEndpoint{host, port});
 
   TransferRecord record;
   record.direction = "outgoing";
@@ -739,6 +1223,27 @@ void handle_http_client(AppState& state, socket_t client) {
     const std::string kind = query_value(request.target, "kind").empty() ? "received" : query_value(request.target, "kind");
     const std::string name = query_value(request.target, "name");
     send_file_inline(state, client, kind, name);
+  } else if (request.method == "POST" && route == "/api/sync/peers") {
+    const std::string host = query_value(request.target, "host");
+    const int port = parse_int(query_value(request.target, "port")).value_or(state.transfer_port);
+    const auto peer = transfer::parse_peer_endpoint(host + ":" + std::to_string(port), state.transfer_port);
+    if (!peer || !transfer::is_allowed_peer(peer->host, state.allow_remote_peers)) {
+      send_json(client, 400, "Bad Request",
+                "{\"ok\":false,\"error\":\"Use localhost or a private LAN peer that this backend allows\"}");
+    } else {
+      add_sync_peer(state, *peer);
+      send_json(client, 200, "OK", status_json(state));
+    }
+  } else if (request.method == "POST" && route == "/api/sync/peers/remove") {
+    const std::string host = query_value(request.target, "host");
+    const int port = parse_int(query_value(request.target, "port")).value_or(state.transfer_port);
+    const auto peer = transfer::parse_peer_endpoint(host + ":" + std::to_string(port), state.transfer_port);
+    if (!peer) {
+      send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Invalid sync peer\"}");
+    } else {
+      remove_sync_peer(state, *peer);
+      send_json(client, 200, "OK", status_json(state));
+    }
   } else if (request.method == "POST" && route == "/api/receive/start") {
     const std::string port_value = query_value(request.target, "port");
     const int requested_port = port_value.empty() ? state.transfer_port : parse_int(port_value).value_or(state.transfer_port);
@@ -801,6 +1306,28 @@ std::string arg_string(int argc, char* argv[], const std::string& name, const st
   return fallback;
 }
 
+void add_sync_peers_from_list(AppState& state, const std::string& raw_peers) {
+  std::size_t start = 0;
+  while (start <= raw_peers.size()) {
+    std::size_t end = raw_peers.find(',', start);
+    const auto semicolon = raw_peers.find(';', start);
+    if (end == std::string::npos || (semicolon != std::string::npos && semicolon < end)) {
+      end = semicolon;
+    }
+
+    const std::string value = raw_peers.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    const auto peer = transfer::parse_peer_endpoint(value, state.transfer_port);
+    if (peer && transfer::is_allowed_peer(peer->host, state.allow_remote_peers)) {
+      add_sync_peer(state, *peer);
+    }
+
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -824,17 +1351,23 @@ int main(int argc, char* argv[]) {
   state.allow_remote_peers = env_flag("P2P_ALLOW_REMOTE", false);
   state.receive_dir = env_value("P2P_RECEIVE_DIR", (std::filesystem::current_path() / "backend" / "received").string());
   state.sent_dir = env_value("P2P_SENT_DIR", (std::filesystem::current_path() / "backend" / "sent").string());
+  state.shared_dir = env_value("P2P_SHARED_DIR", (std::filesystem::current_path() / "shared").string());
+  add_sync_peers_from_list(state, env_value("P2P_SYNC_PEERS", ""));
   std::filesystem::create_directories(state.receive_dir);
   std::filesystem::create_directories(state.sent_dir);
+  std::filesystem::create_directories(state.shared_dir);
 
   std::thread receiver(transfer_listener, std::ref(state));
   receiver.detach();
+  std::thread shared_watcher(shared_folder_watcher, std::ref(state));
+  shared_watcher.detach();
 
   std::cout << "Loopline P2P receiver: " << state.advertised_host << ':' << state.transfer_port << '\n';
   std::cout << "Bind host: " << state.bind_host
             << " | remote peers: " << (state.allow_remote_peers ? "enabled" : "disabled") << '\n';
   std::cout << "Received files: " << state.receive_dir.string() << '\n';
   std::cout << "Sent files: " << state.sent_dir.string() << '\n';
+  std::cout << "Shared folder: " << state.shared_dir.string() << '\n';
   http_server(state);
 
 #ifdef _WIN32

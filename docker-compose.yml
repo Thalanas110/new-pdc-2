@@ -9,6 +9,8 @@ services:
       P2P_ALLOW_REMOTE: "1"
       P2P_RECEIVE_DIR: /data/received
       P2P_SENT_DIR: /data/sent
+      P2P_SHARED_DIR: /data/shared
+      P2P_SYNC_PEERS: ${P2P_SYNC_PEERS:-}
       P2P_ADVERTISED_HOST: ${P2P_ADVERTISED_HOST:-0.0.0.0}
     ports:
       - "8080:8080"
@@ -16,4 +18,5 @@ services:
     volumes:
       - ./backend/received:/data/received
       - ./backend/sent:/data/sent
+      - ./shared:/data/shared
     restart: unless-stopped

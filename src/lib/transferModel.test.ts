@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildPeerUrl,
+  fileKinds,
   formatBytes,
   getFilePreviewKind,
   getTransferPercent,
@@ -57,5 +58,9 @@ describe('transfer model', () => {
     expect(getFilePreviewKind('clip.mp4', 'video/mp4')).toBe('video');
     expect(getFilePreviewKind('voice.mp3', 'audio/mpeg')).toBe('audio');
     expect(getFilePreviewKind('archive.zip', 'application/zip')).toBe('unsupported');
+  });
+
+  it('treats shared as a first-class local file area', () => {
+    expect(fileKinds).toEqual(['received', 'sent', 'shared']);
   });
 });

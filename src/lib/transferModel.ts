@@ -67,7 +67,8 @@ export function buildPeerUrl(host: string, port: number): string {
   return `http://${normalizedHost}:${port}`;
 }
 
-export type FileKind = 'received' | 'sent';
+export const fileKinds = ['received', 'sent', 'shared'] as const;
+export type FileKind = (typeof fileKinds)[number];
 export type FilePreviewKind = 'image' | 'video' | 'audio' | 'pdf' | 'text' | 'unsupported';
 
 export type TransferFileEntry = {
@@ -116,6 +117,11 @@ export type TransferRecord = {
   completedAt: string;
 };
 
+export type SyncPeer = {
+  host: string;
+  port: number;
+};
+
 export type BackendStatus = {
   nodeId: string;
   host: string;
@@ -123,9 +129,11 @@ export type BackendStatus = {
   transferPort: number;
   receiveDir: string;
   sentDir?: string;
+  sharedDir?: string;
   listenerActive: boolean;
   allowRemotePeers?: boolean;
   bindHost?: string;
   advertisedHost?: string;
+  syncPeers?: SyncPeer[];
   transfers: TransferRecord[];
 };

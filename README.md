@@ -40,12 +40,19 @@ Outgoing file copies are saved on the host in:
 backend\sent
 ```
 
+Shared files live on the host in:
+
+```text
+shared
+```
+
 ## Viewing Files In The App
 
 Use the **File vault** panel at the bottom of the Loopline UI.
 
 - **Received** shows files this device received.
 - **Sent** shows local copies of files this device sent.
+- **Shared** shows files in the live shared folder.
 - Click a file to preview it without leaving the page.
 
 Inline preview works for common browser-renderable formats:
@@ -55,7 +62,46 @@ Inline preview works for common browser-renderable formats:
 - Media: `mp4`, `webm`, `mp3`, `wav`, `ogg`
 - PDF: `pdf`
 
-Other formats are still saved in `backend\received` or `backend\sent`, but the browser may not be able to render them inline.
+Other formats are still saved in `backend\received`, `backend\sent`, or `shared`, but the browser may not be able to render them inline.
+
+## Shared Folder Sync
+
+The `shared\` folder is a live sync folder.
+
+When Loopline is running:
+
+- Put a file into `shared\` on one device.
+- Loopline waits until the file stops changing.
+- It sends the file to every registered sync peer.
+- The other device saves it into its own `shared\` folder.
+- The file appears in the **Shared** tab without leaving or refreshing the page.
+
+Updates resend automatically. Renames behave like a delete plus a new file. Deletes are sent to online sync peers.
+
+To register a sync peer from the UI:
+
+1. Enter the other device's IP in **Peer host**.
+2. Keep **Peer port** as `8788`.
+3. Click **Sync folder**.
+
+Sending a normal file to a peer also remembers that peer for shared-folder sync while the backend is running.
+
+You can also start Docker with peers already registered:
+
+```powershell
+$env:P2P_SYNC_PEERS="10.113.71.244:8788,192.168.42.101:8788"
+docker compose up --build
+```
+
+For reliable three-device sync, register a full mesh:
+
+```text
+Laptop A sync peers: Laptop B IP, Device C IP
+Laptop B sync peers: Laptop A IP, Device C IP
+Device C sync peers: Laptop A IP, Laptop B IP
+```
+
+Loopline is still direct P2P. If one pair cannot pass `Test-NetConnection RECEIVER_IP -Port 8788`, that pair cannot sync over the current network.
 
 ## Two-Laptop Phone Hotspot Setup
 
@@ -142,6 +188,8 @@ You can send:
 - Laptop A -> Device C
 - Device C -> Laptop B
 - Any other pair, as long as `Test-NetConnection RECEIVER_IP -Port 8788` succeeds.
+
+For shared-folder sync, add each reachable device as a **Sync folder** peer in the UI, or set `P2P_SYNC_PEERS` before `docker compose up --build`.
 
 ## Third Device Over USB Tethering
 
@@ -374,6 +422,8 @@ P2P_TRANSFER_PORT=8788
 P2P_ALLOW_REMOTE=1
 P2P_RECEIVE_DIR=/data/received
 P2P_SENT_DIR=/data/sent
+P2P_SHARED_DIR=/data/shared
+P2P_SYNC_PEERS=
 ```
 
 ## Mental Model

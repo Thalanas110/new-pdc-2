@@ -8,6 +8,7 @@ import {
   FileUp,
   FileText,
   Film,
+  FolderSync,
   FolderOpen,
   HardDrive,
   Image as ImageIcon,
@@ -18,17 +19,20 @@ import {
   RefreshCw,
   Server,
   ShieldCheck,
+  Share2,
   UploadCloud,
   X,
 } from 'lucide-react';
 import { type ChangeEvent, type DragEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import markUrl from '../assets/loopline-mark.svg';
-import { fetchFiles, fetchStatus, sendFile, startReceiver } from '../lib/backendClient';
+import { addSyncPeer, fetchFiles, fetchStatus, removeSyncPeer, sendFile, startReceiver } from '../lib/backendClient';
 import {
   type BackendStatus,
   type FileKind,
+  type SyncPeer,
   type TransferRecord,
   type TransferFileEntry,
+  fileKinds,
   formatBytes,
   getFilePreviewKind,
   getTransferPercent,
@@ -54,6 +58,7 @@ export function HomeView() {
   const [filesByKind, setFilesByKind] = useState<Record<FileKind, TransferFileEntry[]>>({
     received: [],
     sent: [],
+    shared: [],
   });
   const [selectedVaultFile, setSelectedVaultFile] = useState<TransferFileEntry | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -77,10 +82,14 @@ export function HomeView() {
 
   const refreshFiles = useCallback(async (signal?: AbortSignal) => {
     try {
-      const [received, sent] = await Promise.all([fetchFiles('received', signal), fetchFiles('sent', signal)]);
-      setFilesByKind({ received, sent });
+      const fileLists = await Promise.all(fileKinds.map((kind) => fetchFiles(kind, signal)));
+      setFilesByKind({
+        received: fileLists[0],
+        sent: fileLists[1],
+        shared: fileLists[2],
+      });
     } catch {
-      setFilesByKind({ received: [], sent: [] });
+      setFilesByKind({ received: [], sent: [], shared: [] });
     }
   }, []);
 
@@ -116,6 +125,7 @@ export function HomeView() {
 
   const transfers = status?.transfers ?? [];
   const latestTransfer = transfers[0];
+  const syncPeers = status?.syncPeers ?? [];
   const receivedFiles = useMemo(
     () => transfers.filter((transfer) => transfer.direction === 'incoming' && transfer.status === 'complete'),
     [transfers],
@@ -149,6 +159,31 @@ export function HomeView() {
       setNotice({ tone: 'good', text: 'Receiver is ready' });
     } catch (error) {
       setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Receiver failed' });
+    }
+  };
+
+  const onAddSyncPeer = async () => {
+    if (!isAllowedPeerAddress(peerHost)) {
+      setNotice({ tone: 'bad', text: 'Use localhost or a private LAN IP for shared sync' });
+      return;
+    }
+
+    try {
+      await addSyncPeer({ host: peerHost, port: peerPort });
+      await refreshStatus();
+      setNotice({ tone: 'good', text: `Shared folder syncing with ${peerHost}:${peerPort}` });
+    } catch (error) {
+      setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Could not add sync peer' });
+    }
+  };
+
+  const onRemoveSyncPeer = async (peer: SyncPeer) => {
+    try {
+      await removeSyncPeer(peer);
+      await refreshStatus();
+      setNotice({ tone: 'quiet', text: `Stopped shared sync with ${peer.host}:${peer.port}` });
+    } catch (error) {
+      setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Could not remove sync peer' });
     }
   };
 
@@ -260,6 +295,16 @@ export function HomeView() {
               </label>
             </div>
 
+            <button
+              className="sync-action"
+              type="button"
+              disabled={!isAllowedPeerAddress(peerHost)}
+              onClick={onAddSyncPeer}
+            >
+              <FolderSync size={18} />
+              <span>Sync folder</span>
+            </button>
+
             <label
               className={`drop-target ${dragging ? 'dragging' : ''}`}
               onDragOver={(event) => {
@@ -316,9 +361,12 @@ export function HomeView() {
             activeKind={fileKind}
             filesByKind={filesByKind}
             selectedFile={selectedVaultFile}
+            sharedDir={status?.sharedDir ?? 'shared'}
+            syncPeers={syncPeers}
             onKindChange={setFileKind}
             onSelectFile={setSelectedVaultFile}
             onRefresh={() => void refreshFiles()}
+            onRemovePeer={onRemoveSyncPeer}
           />
         </div>
       </section>
@@ -330,16 +378,22 @@ function FileVault({
   activeKind,
   filesByKind,
   selectedFile,
+  sharedDir,
+  syncPeers,
   onKindChange,
   onSelectFile,
   onRefresh,
+  onRemovePeer,
 }: {
   activeKind: FileKind;
   filesByKind: Record<FileKind, TransferFileEntry[]>;
   selectedFile: TransferFileEntry | null;
+  sharedDir: string;
+  syncPeers: SyncPeer[];
   onKindChange: (kind: FileKind) => void;
   onSelectFile: (file: TransferFileEntry) => void;
   onRefresh: () => void;
+  onRemovePeer: (peer: SyncPeer) => void;
 }) {
   const activeFiles = filesByKind[activeKind];
 
@@ -362,9 +416,43 @@ function FileVault({
             <span>Sent</span>
             <strong>{filesByKind.sent.length}</strong>
           </button>
+          <button type="button" aria-pressed={activeKind === 'shared'} onClick={() => onKindChange('shared')}>
+            <FolderSync size={16} />
+            <span>Shared</span>
+            <strong>{filesByKind.shared.length}</strong>
+          </button>
           <button className="icon-action" type="button" aria-label="Refresh files" onClick={onRefresh}>
             <RefreshCw size={16} />
           </button>
+        </div>
+      </div>
+
+      <div className="shared-status">
+        <div className="shared-path">
+          <Share2 size={16} />
+          <span>
+            <small>Shared folder</small>
+            <strong>{sharedDir}</strong>
+          </span>
+        </div>
+
+        <div className="sync-peers" aria-label="Shared sync peers">
+          {syncPeers.length > 0 ? (
+            syncPeers.map((peer) => (
+              <button
+                key={`${peer.host}:${peer.port}`}
+                type="button"
+                aria-label={`Remove sync peer ${peer.host}:${peer.port}`}
+                onClick={() => onRemovePeer(peer)}
+              >
+                <Share2 size={14} />
+                <span>{peer.host}:{peer.port}</span>
+                <X size={14} />
+              </button>
+            ))
+          ) : (
+            <span>No sync peers</span>
+          )}
         </div>
       </div>
 

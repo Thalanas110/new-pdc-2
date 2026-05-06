@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <charconv>
 #include <iomanip>
 #include <random>
 #include <sstream>
@@ -144,6 +145,36 @@ bool is_allowed_peer(const std::string& host, bool allow_remote_peers) {
     return true;
   }
   return allow_remote_peers && is_private_lan_host(host);
+}
+
+std::optional<PeerEndpoint> parse_peer_endpoint(const std::string& input, int fallback_port) {
+  const std::string value = trim_copy(input);
+  if (value.empty() || fallback_port < 1 || fallback_port > 65535) {
+    return std::nullopt;
+  }
+
+  const auto colon = value.rfind(':');
+  const std::string host = colon == std::string::npos ? value : trim_copy(value.substr(0, colon));
+  int port = fallback_port;
+  if (colon != std::string::npos) {
+    const std::string port_value = trim_copy(value.substr(colon + 1));
+    const auto* begin = port_value.data();
+    const auto* end = port_value.data() + port_value.size();
+    const auto result = std::from_chars(begin, end, port);
+    if (result.ec != std::errc{} || result.ptr != end || port < 1 || port > 65535) {
+      return std::nullopt;
+    }
+  }
+
+  if (!is_allowed_peer(host, true)) {
+    return std::nullopt;
+  }
+
+  return PeerEndpoint{host, port};
+}
+
+std::string peer_endpoint_key(const std::string& host, int port) {
+  return trim_copy(host) + ":" + std::to_string(port);
 }
 
 std::string json_escape(const std::string& input) {

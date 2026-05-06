@@ -4,6 +4,7 @@ backend/*.exe
 backend/tests/*.exe
 backend/received
 backend/sent
+shared
 *.log
 *.err
 .localhost-pids.json

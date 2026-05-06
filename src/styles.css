@@ -221,7 +221,8 @@ h2 {
 }
 
 .primary-action,
-.send-action {
+.send-action,
+.sync-action {
   min-height: 46px;
   border: 0;
   display: inline-flex;
@@ -237,9 +238,23 @@ h2 {
   margin-top: 4px;
 }
 
+.sync-action {
+  width: 100%;
+  min-height: 42px;
+  margin-bottom: 16px;
+  background: #fbf7ec;
+  color: var(--ink);
+  border: 1px solid rgba(24, 33, 28, 0.18);
+}
+
 .primary-action:hover,
 .send-action:hover:not(:disabled) {
   background: #26372e;
+}
+
+.sync-action:hover:not(:disabled) {
+  border-color: var(--green-dark);
+  background: #efe4ce;
 }
 
 .path-strip {
@@ -362,6 +377,11 @@ input:focus {
 .send-action:disabled {
   background: rgba(24, 33, 28, 0.34);
   color: rgba(255, 255, 255, 0.72);
+}
+
+.sync-action:disabled {
+  color: rgba(24, 33, 28, 0.44);
+  background: rgba(24, 33, 28, 0.08);
 }
 
 .inline-alert {
@@ -560,6 +580,77 @@ input:focus {
   padding: 0;
 }
 
+.shared-status {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(320px, 1fr);
+  gap: 12px;
+}
+
+.shared-path,
+.sync-peers {
+  min-width: 0;
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #fbf7ec;
+  border: 1px solid rgba(24, 33, 28, 0.14);
+}
+
+.shared-path svg {
+  color: var(--green-dark);
+  flex: 0 0 auto;
+}
+
+.shared-path span {
+  min-width: 0;
+}
+
+.shared-path small,
+.shared-path strong {
+  display: block;
+}
+
+.shared-path small {
+  color: var(--coal-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.shared-path strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-peers {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.sync-peers > span {
+  color: var(--coal-muted);
+}
+
+.sync-peers button {
+  max-width: 100%;
+  min-height: 30px;
+  border: 1px solid rgba(24, 33, 28, 0.16);
+  background: rgba(24, 33, 28, 0.07);
+  color: var(--ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+}
+
+.sync-peers button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .vault-grid {
   display: grid;
   grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.4fr);
@@ -749,9 +840,17 @@ input:focus {
     flex-direction: column;
   }
 
+  .shared-status {
+    grid-template-columns: 1fr;
+  }
+
+  .sync-peers {
+    justify-content: flex-start;
+  }
+
   .vault-tabs {
     display: grid;
-    grid-template-columns: 1fr 1fr 38px;
+    grid-template-columns: 1fr 1fr 1fr 38px;
   }
 
   .peer-grid,

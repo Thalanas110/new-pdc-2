@@ -3,6 +3,7 @@ set -eu
 
 mkdir -p "${P2P_RECEIVE_DIR:-/data/received}"
 mkdir -p "${P2P_SENT_DIR:-/data/sent}"
+mkdir -p "${P2P_SHARED_DIR:-/data/shared}"
 
 p2p_server \
   --http "${P2P_HTTP_PORT:-8787}" \

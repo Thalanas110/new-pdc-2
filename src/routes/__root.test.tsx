@@ -13,5 +13,7 @@ describe('root transfer home', () => {
     expect(screen.getByRole('heading', { name: /File vault/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Received/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Sent/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Shared/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sync folder/i })).toBeInTheDocument();
   });
 });
