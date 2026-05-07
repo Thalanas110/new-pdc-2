@@ -1,9 +1,10 @@
 import { Loader2, Plus } from 'lucide-react';
 import { type ChangeEvent, type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchFiles, fetchStatus, sendFile, startReceiver } from '../lib/backendClient';
+import { addSyncPeer, fetchFiles, fetchStatus, removeSyncPeer, sendFile, startReceiver } from '../lib/backendClient';
 import {
   type BackendStatus,
   type FileKind,
+  type SyncPeer,
   type TransferFileEntry,
   fileKinds,
   formatBytes,
@@ -15,7 +16,7 @@ type Notice = {
   text: string;
 };
 
-type ViewMode = 'transfer' | 'receive';
+type ViewMode = 'transfer' | 'receive' | 'shared';
 
 type PanelFile = {
   id: string;
@@ -83,6 +84,8 @@ export function HomeView() {
   }, [refreshFiles, refreshStatus]);
 
   const receivedFiles = filesByKind.received;
+  const sharedFiles = filesByKind.shared;
+  const syncPeers = status?.syncPeers ?? [];
   const uploadedFiles = useMemo<PanelFile[]>(() => {
     const stagedFile = selectedFile
       ? [
@@ -136,6 +139,31 @@ export function HomeView() {
     }
   };
 
+  const onAddSyncPeer = async () => {
+    if (!isAllowedPeerAddress(peerHost)) {
+      setNotice({ tone: 'bad', text: 'Use localhost or a private LAN IP.' });
+      return;
+    }
+
+    try {
+      await addSyncPeer({ host: peerHost, port: peerPort });
+      await refreshStatus();
+      setNotice({ tone: 'good', text: `Shared folder syncing with ${peerHost}:${peerPort}` });
+    } catch (error) {
+      setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Could not add sync peer' });
+    }
+  };
+
+  const onRemoveSyncPeer = async (peer: SyncPeer) => {
+    try {
+      await removeSyncPeer(peer);
+      await refreshStatus();
+      setNotice({ tone: 'quiet', text: `Stopped shared sync with ${peer.host}:${peer.port}` });
+    } catch (error) {
+      setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Could not remove sync peer' });
+    }
+  };
+
   const onSend = async () => {
     if (!selectedFile || !canSend) {
       return;
@@ -183,6 +211,14 @@ export function HomeView() {
           >
             Receive
           </button>
+          <button
+            type="button"
+            className={activeView === 'shared' ? 'active' : ''}
+            aria-pressed={activeView === 'shared'}
+            onClick={() => setActiveView('shared')}
+          >
+            Shared
+          </button>
         </nav>
       </header>
 
@@ -205,7 +241,7 @@ export function HomeView() {
           onSend={onSend}
           onDragStateChange={setDragging}
         />
-      ) : (
+      ) : activeView === 'receive' ? (
         <ReceiveScreen
           inboxCount={receivedFiles.length}
           notice={notice}
@@ -216,6 +252,20 @@ export function HomeView() {
           onPeerHostChange={setPeerHost}
           onPeerPortChange={setPeerPort}
           onStartReceiver={onStartReceiver}
+        />
+      ) : (
+        <SharedScreen
+          inboxCount={sharedFiles.length}
+          notice={notice}
+          peerHost={peerHost}
+          peerPort={peerPort}
+          sharedFiles={sharedFiles}
+          sharedDir={status?.sharedDir ?? 'shared'}
+          syncPeers={syncPeers}
+          onPeerHostChange={setPeerHost}
+          onPeerPortChange={setPeerPort}
+          onAddSyncPeer={onAddSyncPeer}
+          onRemoveSyncPeer={onRemoveSyncPeer}
         />
       )}
     </main>
@@ -380,6 +430,98 @@ function ReceiveScreen({
           <div className="received-body">
             <FilePanel files={receivedFiles.map(toPanelFile)} />
           </div>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function SharedScreen({
+  inboxCount,
+  notice,
+  peerHost,
+  peerPort,
+  sharedFiles,
+  sharedDir,
+  syncPeers,
+  onPeerHostChange,
+  onPeerPortChange,
+  onAddSyncPeer,
+  onRemoveSyncPeer,
+}: {
+  inboxCount: number;
+  notice: Notice;
+  peerHost: string;
+  peerPort: number;
+  sharedFiles: TransferFileEntry[];
+  sharedDir: string;
+  syncPeers: SyncPeer[];
+  onPeerHostChange: (value: string) => void;
+  onPeerPortChange: (value: number) => void;
+  onAddSyncPeer: () => void;
+  onRemoveSyncPeer: (peer: SyncPeer) => void;
+}) {
+  const canShare = isAllowedPeerAddress(peerHost);
+
+  return (
+    <section className="loop-page shared-page" aria-labelledby="shared-heading">
+      <h1 id="shared-heading">Shared</h1>
+
+      <section className="shared-board" aria-label="Shared folder controls">
+        <ProtocolControls
+          variant="receive"
+          inboxCount={inboxCount}
+          peerHost={peerHost}
+          peerPort={peerPort}
+          onPeerHostChange={onPeerHostChange}
+          onPeerPortChange={onPeerPortChange}
+          action={
+            <button className="receive-button" type="button" disabled={!canShare} onClick={onAddSyncPeer}>
+              Start sharing
+            </button>
+          }
+        />
+
+        {!canShare ? <p className="receive-note bad">Use localhost or a private LAN IP.</p> : null}
+        {notice.tone !== 'quiet' ? <p className={`receive-note ${notice.tone}`}>{notice.text}</p> : null}
+
+        <div className="shared-path-strip">
+          <span>Shared folder</span>
+          <strong>{sharedDir}</strong>
+        </div>
+
+        <div className="shared-content-grid">
+          <div className="shared-frame">
+            <div className="received-title">SHARED FILES</div>
+            <div className="shared-body">
+              <FilePanel files={sharedFiles.map(toPanelFile)} />
+            </div>
+          </div>
+
+          <aside className="shared-frame sync-frame" aria-labelledby="sync-peers-heading">
+            <div className="received-title" id="sync-peers-heading">
+              SYNC PEERS
+            </div>
+            <div className="sync-body">
+              {syncPeers.length > 0 ? (
+                <div className="sync-peer-list">
+                  {syncPeers.map((peer) => (
+                    <button
+                      className="sync-peer-row"
+                      key={`${peer.host}:${peer.port}`}
+                      type="button"
+                      onClick={() => onRemoveSyncPeer(peer)}
+                    >
+                      <span>{peer.host}:{peer.port}</span>
+                      <strong>Remove</strong>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="sync-empty">No sync peers</div>
+              )}
+            </div>
+          </aside>
         </div>
       </section>
     </section>
