@@ -30,8 +30,19 @@ describe('root transfer home', () => {
 
     expect(screen.getByRole('heading', { name: 'Shared' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start sharing' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Upload to shared' })).toBeDisabled();
+    expect(screen.getByText('Click to stage shared upload')).toBeInTheDocument();
     expect(screen.getByText('SHARED FILES')).toBeInTheDocument();
     expect(screen.getByText('SYNC PEERS')).toBeInTheDocument();
     expect(screen.getByText('No sync peers')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Shared file'), {
+      target: {
+        files: [new File(['shared'], 'shared-note.txt', { type: 'text/plain' })],
+      },
+    });
+
+    expect(screen.getByRole('button', { name: 'Upload to shared' })).toBeEnabled();
+    expect(screen.getByText(/shared-note.txt/)).toBeInTheDocument();
   });
 });

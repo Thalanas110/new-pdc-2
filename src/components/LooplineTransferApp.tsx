@@ -1,6 +1,14 @@
 import { Loader2, Plus } from 'lucide-react';
 import { type ChangeEvent, type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { addSyncPeer, fetchFiles, fetchStatus, removeSyncPeer, sendFile, startReceiver } from '../lib/backendClient';
+import {
+  addSyncPeer,
+  fetchFiles,
+  fetchStatus,
+  removeSyncPeer,
+  sendFile,
+  startReceiver,
+  uploadSharedFile,
+} from '../lib/backendClient';
 import {
   type BackendStatus,
   type FileKind,
@@ -40,6 +48,9 @@ export function HomeView() {
   const [dragging, setDragging] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
+  const [selectedSharedFile, setSelectedSharedFile] = useState<File | null>(null);
+  const [sharedUploading, setSharedUploading] = useState(false);
+  const [sharedUploadPercent, setSharedUploadPercent] = useState(0);
 
   const refreshStatus = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -110,7 +121,7 @@ export function HomeView() {
   const canSend = Boolean(selectedFile) && isAllowedPeerAddress(peerHost) && !sending;
 
   const handleFiles = (files: FileList | null) => {
-    const file = files?.item(0);
+    const file = firstSelectedFile(files);
     if (!file) {
       return;
     }
@@ -127,6 +138,16 @@ export function HomeView() {
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     handleFiles(event.target.files);
+  };
+
+  const onSharedFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = firstSelectedFile(event.target.files);
+    if (!file) {
+      return;
+    }
+    setSelectedSharedFile(file);
+    setSharedUploadPercent(0);
+    setNotice({ tone: 'quiet', text: `${file.name} staged for shared upload` });
   };
 
   const onStartReceiver = async () => {
@@ -161,6 +182,31 @@ export function HomeView() {
       setNotice({ tone: 'quiet', text: `Stopped shared sync with ${peer.host}:${peer.port}` });
     } catch (error) {
       setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Could not remove sync peer' });
+    }
+  };
+
+  const onUploadShared = async () => {
+    if (!selectedSharedFile || sharedUploading) {
+      return;
+    }
+
+    setSharedUploading(true);
+    setSharedUploadPercent(0);
+    setNotice({ tone: 'quiet', text: `Uploading ${selectedSharedFile.name} to shared` });
+    try {
+      const uploadedName = await uploadSharedFile({
+        file: selectedSharedFile,
+        onProgress: setSharedUploadPercent,
+      });
+      setSharedUploadPercent(100);
+      setSelectedSharedFile(null);
+      setNotice({ tone: 'good', text: `${uploadedName} added to shared` });
+      await refreshFiles();
+      await refreshStatus();
+    } catch (error) {
+      setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Shared upload failed' });
+    } finally {
+      setSharedUploading(false);
     }
   };
 
@@ -262,10 +308,15 @@ export function HomeView() {
           sharedFiles={sharedFiles}
           sharedDir={status?.sharedDir ?? 'shared'}
           syncPeers={syncPeers}
+          selectedSharedFile={selectedSharedFile}
+          sharedUploading={sharedUploading}
+          sharedUploadPercent={sharedUploadPercent}
           onPeerHostChange={setPeerHost}
           onPeerPortChange={setPeerPort}
           onAddSyncPeer={onAddSyncPeer}
           onRemoveSyncPeer={onRemoveSyncPeer}
+          onSharedFileChange={onSharedFileChange}
+          onUploadShared={onUploadShared}
         />
       )}
     </main>
@@ -281,6 +332,10 @@ function Logo() {
       <span>P</span>
     </div>
   );
+}
+
+function firstSelectedFile(files: FileList | null): File | null {
+  return files?.[0] ?? files?.item(0) ?? null;
 }
 
 function TransferScreen({
@@ -444,10 +499,15 @@ function SharedScreen({
   sharedFiles,
   sharedDir,
   syncPeers,
+  selectedSharedFile,
+  sharedUploading,
+  sharedUploadPercent,
   onPeerHostChange,
   onPeerPortChange,
   onAddSyncPeer,
   onRemoveSyncPeer,
+  onSharedFileChange,
+  onUploadShared,
 }: {
   inboxCount: number;
   notice: Notice;
@@ -456,12 +516,18 @@ function SharedScreen({
   sharedFiles: TransferFileEntry[];
   sharedDir: string;
   syncPeers: SyncPeer[];
+  selectedSharedFile: File | null;
+  sharedUploading: boolean;
+  sharedUploadPercent: number;
   onPeerHostChange: (value: string) => void;
   onPeerPortChange: (value: number) => void;
   onAddSyncPeer: () => void;
   onRemoveSyncPeer: (peer: SyncPeer) => void;
+  onSharedFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onUploadShared: () => void;
 }) {
   const canShare = isAllowedPeerAddress(peerHost);
+  const canUploadShared = Boolean(selectedSharedFile) && !sharedUploading;
 
   return (
     <section className="loop-page shared-page" aria-labelledby="shared-heading">
@@ -488,6 +554,26 @@ function SharedScreen({
         <div className="shared-path-strip">
           <span>Shared folder</span>
           <strong>{sharedDir}</strong>
+        </div>
+
+        <div className="shared-upload-rail">
+          <label className="shared-upload-target">
+            <input aria-label="Shared file" type="file" onChange={onSharedFileChange} />
+            <span className="mini-plus" aria-hidden="true">
+              <Plus size={22} strokeWidth={2.8} />
+            </span>
+            <span>
+              <strong>{selectedSharedFile ? selectedSharedFile.name : 'Click to stage shared upload'}</strong>
+              <small>{selectedSharedFile ? formatBytes(selectedSharedFile.size) : 'Directly add a file to this shared folder'}</small>
+            </span>
+          </label>
+          <div className="shared-upload-meter" aria-label="Shared upload progress">
+            <span style={{ width: `${sharedUploadPercent}%` }} />
+          </div>
+          <button className="shared-upload-button" type="button" disabled={!canUploadShared} onClick={onUploadShared}>
+            {sharedUploading ? <Loader2 className="spin" size={18} /> : null}
+            <span>Upload to shared</span>
+          </button>
         </div>
 
         <div className="shared-content-grid">

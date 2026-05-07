@@ -1133,6 +1133,38 @@ void send_file_inline(AppState& state, socket_t client, const std::string& kind,
   }
 }
 
+void save_shared_upload(AppState& state,
+                        socket_t client,
+                        const std::string& file_name,
+                        const std::vector<char>& body) {
+  std::filesystem::create_directories(state.shared_dir);
+  const std::filesystem::path destination = unique_received_path(state.shared_dir, file_name);
+  std::ofstream output(destination, std::ios::binary);
+  if (!output) {
+    send_json(client, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"Could not open shared file\"}");
+    return;
+  }
+
+  output.write(body.data(), static_cast<std::streamsize>(body.size()));
+  if (!output) {
+    send_json(client, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"Could not save shared file\"}");
+    return;
+  }
+
+  TransferRecord record;
+  record.direction = "outgoing";
+  record.file_name = destination.filename().string();
+  record.status = "complete";
+  record.peer = "shared";
+  record.size = static_cast<std::uint64_t>(body.size());
+  record.bytes_transferred = static_cast<std::uint64_t>(body.size());
+  record.message = "Added to shared folder";
+  add_transfer(state, record);
+
+  send_json(client, 200, "OK",
+            "{\"ok\":true,\"name\":\"" + transfer::json_escape(destination.filename().string()) + "\"}");
+}
+
 void send_file_to_peer(AppState& state,
                        socket_t client,
                        const std::string& host,
@@ -1261,6 +1293,10 @@ void handle_http_client(AppState& state, socket_t client) {
     const int peer_port = parse_int(header_value(request, "x-peer-port", std::to_string(state.transfer_port)))
                               .value_or(state.transfer_port);
     send_file_to_peer(state, client, peer_host, peer_port, file_name, request.body);
+  } else if (request.method == "POST" && route == "/api/shared/upload") {
+    const std::string raw_file_name = url_decode(header_value(request, "x-file-name", "shared-upload.bin"));
+    const std::string file_name = transfer::safe_file_name(raw_file_name);
+    save_shared_upload(state, client, file_name, request.body);
   } else {
     send_json(client, 404, "Not Found", "{\"ok\":false,\"error\":\"Not found\"}");
   }

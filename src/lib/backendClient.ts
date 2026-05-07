@@ -63,6 +63,43 @@ export type SendFileOptions = {
   onProgress: (percent: number) => void;
 };
 
+export type UploadSharedFileOptions = {
+  file: File;
+  onProgress: (percent: number) => void;
+};
+
+export function uploadSharedFile({ file, onProgress }: UploadSharedFileOptions): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/shared/upload');
+    request.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+    request.setRequestHeader('Content-Type', 'application/octet-stream');
+
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(getTransferPercent(event.loaded, event.total));
+      }
+    };
+
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        try {
+          const payload = JSON.parse(request.responseText) as { name?: string };
+          resolve(payload.name ?? file.name);
+        } catch {
+          resolve(file.name);
+        }
+        return;
+      }
+
+      reject(new Error(request.responseText || `Shared upload failed: ${request.status}`));
+    };
+
+    request.onerror = () => reject(new Error('Could not reach the C++ backend'));
+    request.send(file);
+  });
+}
+
 export function sendFile({ file, peerHost, peerPort, onProgress }: SendFileOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
