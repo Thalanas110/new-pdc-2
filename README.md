@@ -1,6 +1,6 @@
 # Loopline P2P
 
-Loopline is a private-network P2P file transfer app. The frontend is React + TanStack Router, and the transfer backend is a C++ socket server.
+Loopline is a private-network P2P file transfer app. The frontend is React + TanStack Start/TanStack Router, and the transfer backend is a C++ socket server.
 
 It works like this:
 
@@ -387,7 +387,7 @@ npm run dev:backend
 Frontend in another terminal:
 
 ```powershell
-npm run dev -- --host 127.0.0.1 --port 5173
+npm run dev
 ```
 
 Open:

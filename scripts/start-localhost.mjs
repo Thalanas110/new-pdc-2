@@ -22,8 +22,8 @@ function launch(name, command, args, logPrefix) {
 const backendCommand = isWindows ? resolve(root, 'backend/p2p_server.exe') : resolve(root, 'backend/p2p_server');
 const frontendCommand = isWindows ? 'cmd.exe' : 'npm';
 const frontendArgs = isWindows
-  ? ['/c', 'npm.cmd', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '5173']
-  : ['run', 'dev', '--', '--host', '127.0.0.1', '--port', '5173'];
+  ? ['/c', 'npm.cmd', 'run', 'dev']
+  : ['run', 'dev'];
 
 const processes = [
   launch('backend', backendCommand, ['--http', '8787', '--transfer', '8788'], 'backend-dev'),
