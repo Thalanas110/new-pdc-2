@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { uploadSharedFile } from './backendClient';
+import { syncSharedFolder, uploadSharedFile } from './backendClient';
 
 type HeaderMap = Record<string, string>;
 
@@ -57,5 +57,21 @@ describe('backend client shared uploads', () => {
     expect(request?.requestHeaders['X-File-Name']).toBe(encodeURIComponent(file.name));
     expect(request?.requestHeaders['Content-Type']).toBe('application/octet-stream');
     expect(request?.requestBody).toBe(file);
+  });
+
+  it('requests an immediate shared folder sync', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await syncSharedFolder();
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/shared/sync', {
+      method: 'POST',
+    });
   });
 });

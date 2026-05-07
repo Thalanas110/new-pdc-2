@@ -30,6 +30,7 @@ describe('root transfer home', () => {
 
     expect(screen.getByRole('heading', { name: 'Shared' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Start sharing' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sync now' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Upload to shared' })).toBeDisabled();
     expect(screen.getByText('Click to stage shared upload')).toBeInTheDocument();
     expect(screen.getByText('SHARED FILES')).toBeInTheDocument();

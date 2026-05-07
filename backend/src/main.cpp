@@ -80,6 +80,13 @@ struct SharedFileSignature {
   }
 };
 
+struct SharedSyncSummary {
+  std::size_t peers = 0;
+  std::size_t files = 0;
+  std::size_t attempted = 0;
+  std::size_t synced = 0;
+};
+
 struct AppState {
   std::mutex mutex;
   std::vector<TransferRecord> transfers;
@@ -674,6 +681,43 @@ std::map<std::string, SharedFileProbe> scan_shared_folder(const std::filesystem:
   return files;
 }
 
+SharedSyncSummary sync_shared_folder_once(AppState& state) {
+  SharedSyncSummary summary;
+  const auto peers = sync_peers_snapshot(state);
+  const auto current_probe = scan_shared_folder(state.shared_dir);
+
+  summary.peers = peers.size();
+  summary.files = current_probe.size();
+
+  for (const auto& [name, probe] : current_probe) {
+    (void)probe;
+    const std::filesystem::path file_path = state.shared_dir / name;
+    const auto signature = shared_file_signature(file_path);
+    if (!signature) {
+      continue;
+    }
+
+    for (const auto& peer : peers) {
+      ++summary.attempted;
+      if (send_shared_file_to_peer(state, peer, name, file_path, *signature)) {
+        ++summary.synced;
+      }
+    }
+  }
+
+  return summary;
+}
+
+std::string shared_sync_summary_json(const SharedSyncSummary& summary) {
+  std::ostringstream out;
+  out << "{\"ok\":true,";
+  out << "\"peers\":" << summary.peers << ',';
+  out << "\"files\":" << summary.files << ',';
+  out << "\"attempted\":" << summary.attempted << ',';
+  out << "\"synced\":" << summary.synced << '}';
+  return out.str();
+}
+
 void shared_folder_watcher(AppState& state) {
   std::map<std::string, SharedFileProbe> last_probe;
   std::map<std::string, SharedFileSignature> known_versions;
@@ -1091,6 +1135,11 @@ void send_json(socket_t client, int status, const std::string& status_text, cons
   send_response(client, status, status_text, "application/json", body);
 }
 
+void sync_shared_folder_now(AppState& state, socket_t client) {
+  const auto summary = sync_shared_folder_once(state);
+  send_json(client, 200, "OK", shared_sync_summary_json(summary));
+}
+
 void send_file_inline(AppState& state, socket_t client, const std::string& kind, const std::string& raw_name) {
   const auto directory = directory_for_kind(state, kind);
   if (!directory) {
@@ -1293,6 +1342,8 @@ void handle_http_client(AppState& state, socket_t client) {
     const int peer_port = parse_int(header_value(request, "x-peer-port", std::to_string(state.transfer_port)))
                               .value_or(state.transfer_port);
     send_file_to_peer(state, client, peer_host, peer_port, file_name, request.body);
+  } else if (request.method == "POST" && route == "/api/shared/sync") {
+    sync_shared_folder_now(state, client);
   } else if (request.method == "POST" && route == "/api/shared/upload") {
     const std::string raw_file_name = url_decode(header_value(request, "x-file-name", "shared-upload.bin"));
     const std::string file_name = transfer::safe_file_name(raw_file_name);

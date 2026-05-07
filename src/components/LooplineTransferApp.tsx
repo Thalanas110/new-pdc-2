@@ -1,4 +1,4 @@
-import { Loader2, Plus } from 'lucide-react';
+import { Loader2, Plus, RefreshCw } from 'lucide-react';
 import { type ChangeEvent, type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   addSyncPeer,
@@ -7,6 +7,7 @@ import {
   removeSyncPeer,
   sendFile,
   startReceiver,
+  syncSharedFolder,
   uploadSharedFile,
 } from '../lib/backendClient';
 import {
@@ -51,6 +52,7 @@ export function HomeView() {
   const [selectedSharedFile, setSelectedSharedFile] = useState<File | null>(null);
   const [sharedUploading, setSharedUploading] = useState(false);
   const [sharedUploadPercent, setSharedUploadPercent] = useState(0);
+  const [sharedSyncing, setSharedSyncing] = useState(false);
 
   const refreshStatus = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -160,6 +162,41 @@ export function HomeView() {
     }
   };
 
+  const runSharedSync = async (quiet = false) => {
+    if (sharedSyncing) {
+      return null;
+    }
+
+    setSharedSyncing(true);
+    if (!quiet) {
+      setNotice({ tone: 'quiet', text: 'Syncing shared folder' });
+    }
+
+    try {
+      const result = await syncSharedFolder();
+      await refreshStatus();
+      await refreshFiles();
+      if (!quiet) {
+        const peerLabel = result.peers === 1 ? 'peer' : 'peers';
+        setNotice({
+          tone: result.peers > 0 ? 'good' : 'bad',
+          text:
+            result.peers > 0
+              ? `Shared sync checked ${result.files} files with ${result.peers} ${peerLabel}`
+              : 'Add a sync peer before syncing.',
+        });
+      }
+      return result;
+    } catch (error) {
+      if (!quiet) {
+        setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Shared sync failed' });
+      }
+      throw error;
+    } finally {
+      setSharedSyncing(false);
+    }
+  };
+
   const onAddSyncPeer = async () => {
     if (!isAllowedPeerAddress(peerHost)) {
       setNotice({ tone: 'bad', text: 'Use localhost or a private LAN IP.' });
@@ -168,8 +205,14 @@ export function HomeView() {
 
     try {
       await addSyncPeer({ host: peerHost, port: peerPort });
+      const syncResult = await runSharedSync(true);
       await refreshStatus();
-      setNotice({ tone: 'good', text: `Shared folder syncing with ${peerHost}:${peerPort}` });
+      setNotice({
+        tone: 'good',
+        text: syncResult
+          ? `Shared folder syncing with ${peerHost}:${peerPort} / ${syncResult.files} files checked`
+          : `Shared folder syncing with ${peerHost}:${peerPort}`,
+      });
     } catch (error) {
       setNotice({ tone: 'bad', text: error instanceof Error ? error.message : 'Could not add sync peer' });
     }
@@ -201,6 +244,9 @@ export function HomeView() {
       setSharedUploadPercent(100);
       setSelectedSharedFile(null);
       setNotice({ tone: 'good', text: `${uploadedName} added to shared` });
+      if (syncPeers.length > 0) {
+        await runSharedSync(true);
+      }
       await refreshFiles();
       await refreshStatus();
     } catch (error) {
@@ -311,10 +357,12 @@ export function HomeView() {
           selectedSharedFile={selectedSharedFile}
           sharedUploading={sharedUploading}
           sharedUploadPercent={sharedUploadPercent}
+          sharedSyncing={sharedSyncing}
           onPeerHostChange={setPeerHost}
           onPeerPortChange={setPeerPort}
           onAddSyncPeer={onAddSyncPeer}
           onRemoveSyncPeer={onRemoveSyncPeer}
+          onSyncShared={() => void runSharedSync()}
           onSharedFileChange={onSharedFileChange}
           onUploadShared={onUploadShared}
         />
@@ -502,10 +550,12 @@ function SharedScreen({
   selectedSharedFile,
   sharedUploading,
   sharedUploadPercent,
+  sharedSyncing,
   onPeerHostChange,
   onPeerPortChange,
   onAddSyncPeer,
   onRemoveSyncPeer,
+  onSyncShared,
   onSharedFileChange,
   onUploadShared,
 }: {
@@ -519,15 +569,18 @@ function SharedScreen({
   selectedSharedFile: File | null;
   sharedUploading: boolean;
   sharedUploadPercent: number;
+  sharedSyncing: boolean;
   onPeerHostChange: (value: string) => void;
   onPeerPortChange: (value: number) => void;
   onAddSyncPeer: () => void;
   onRemoveSyncPeer: (peer: SyncPeer) => void;
+  onSyncShared: () => void;
   onSharedFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onUploadShared: () => void;
 }) {
   const canShare = isAllowedPeerAddress(peerHost);
   const canUploadShared = Boolean(selectedSharedFile) && !sharedUploading;
+  const canSyncShared = syncPeers.length > 0 && !sharedSyncing;
 
   return (
     <section className="loop-page shared-page" aria-labelledby="shared-heading">
@@ -542,9 +595,15 @@ function SharedScreen({
           onPeerHostChange={onPeerHostChange}
           onPeerPortChange={onPeerPortChange}
           action={
-            <button className="receive-button" type="button" disabled={!canShare} onClick={onAddSyncPeer}>
-              Start sharing
-            </button>
+            <div className="shared-action-group">
+              <button className="shared-sync-button" type="button" disabled={!canSyncShared} onClick={onSyncShared}>
+                <RefreshCw className={sharedSyncing ? 'spin' : undefined} size={16} />
+                <span>Sync now</span>
+              </button>
+              <button className="receive-button" type="button" disabled={!canShare} onClick={onAddSyncPeer}>
+                Start sharing
+              </button>
+            </div>
           }
         />
 

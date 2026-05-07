@@ -190,6 +190,33 @@ button:disabled {
   margin-left: auto;
 }
 
+.shared-action-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shared-sync-button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 14px;
+  background: #202020;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.shared-sync-button:disabled {
+  background: #676767;
+  color: #d6d6d6;
+}
+
 .dark-frame {
   background: var(--frame);
   color: #ffffff;
@@ -748,6 +775,17 @@ button:disabled {
 
   .protocol-field input {
     width: min(100%, 170px);
+  }
+
+  .shared-action-group {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .shared-sync-button,
+  .shared-action-group .receive-button {
+    width: 100%;
   }
 
   .transfer-actions {

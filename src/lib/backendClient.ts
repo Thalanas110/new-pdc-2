@@ -68,6 +68,24 @@ export type UploadSharedFileOptions = {
   onProgress: (percent: number) => void;
 };
 
+export type SharedSyncResult = {
+  peers: number;
+  files: number;
+  attempted: number;
+  synced: number;
+};
+
+export async function syncSharedFolder(): Promise<SharedSyncResult> {
+  const response = await fetch('/api/shared/sync', {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `Shared sync failed: ${response.status}`);
+  }
+  return response.json() as Promise<SharedSyncResult>;
+}
+
 export function uploadSharedFile({ file, onProgress }: UploadSharedFileOptions): Promise<string> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
