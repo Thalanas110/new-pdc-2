@@ -7,6 +7,9 @@ describe('root transfer home', () => {
     render(<HomeView />);
 
     expect(screen.getByRole('heading', { name: 'Transfer' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Transfer status')).toHaveTextContent('Backend waiting on 127.0.0.1:8787');
+    expect(screen.getByLabelText('Transfer status')).toHaveTextContent('Received 0');
+    expect(screen.getAllByText('No files')).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: 'Transfer' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Receive' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: 'Shared' })).toHaveAttribute('aria-pressed', 'false');
@@ -19,6 +22,7 @@ describe('root transfer home', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Receive' }));
 
     expect(screen.getByRole('heading', { name: 'Receive' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Receive status')).toHaveTextContent('Inbox 0');
     expect(screen.getByRole('button', { name: 'Start receiving' })).toBeInTheDocument();
     expect(screen.getByText('RECEIVED FILES')).toBeInTheDocument();
   });
@@ -29,6 +33,8 @@ describe('root transfer home', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Shared' }));
 
     expect(screen.getByRole('heading', { name: 'Shared' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Shared status')).toHaveTextContent('Shared 0');
+    expect(screen.getByLabelText('Shared status')).toHaveTextContent('Peers 0');
     expect(screen.getByRole('button', { name: 'Start sharing' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sync now' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Upload to shared' })).toBeDisabled();
@@ -44,6 +50,6 @@ describe('root transfer home', () => {
     });
 
     expect(screen.getByRole('button', { name: 'Upload to shared' })).toBeEnabled();
-    expect(screen.getByText(/shared-note.txt/)).toBeInTheDocument();
+    expect(screen.getAllByText(/shared-note.txt/)).not.toHaveLength(0);
   });
 });

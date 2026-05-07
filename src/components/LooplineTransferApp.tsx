@@ -34,6 +34,11 @@ type PanelFile = {
   url?: string;
 };
 
+type StatusMetric = {
+  text: string;
+  tone?: Notice['tone'];
+};
+
 export function HomeView() {
   const [activeView, setActiveView] = useState<ViewMode>('transfer');
   const [status, setStatus] = useState<BackendStatus | null>(null);
@@ -423,7 +428,15 @@ function TransferScreen({
 }) {
   return (
     <section className="loop-page transfer-page" aria-labelledby="transfer-heading">
-      <h1 id="transfer-heading">Transfer</h1>
+      <ScreenHeader
+        id="transfer-heading"
+        title="Transfer"
+        metrics={[
+          { text: notice.text, tone: notice.tone },
+          { text: `Target ${peerHost}:${peerPort}` },
+          { text: `Received ${inboxCount}` },
+        ]}
+      />
 
       <div className="transfer-layout">
         <div className="transfer-primary">
@@ -478,7 +491,10 @@ function TransferScreen({
         </div>
 
         <aside className="dark-frame side-frame" aria-labelledby="side-uploaded-files-heading">
-          <h2 id="side-uploaded-files-heading">Uploaded Files</h2>
+          <h2 id="side-uploaded-files-heading" className="frame-heading">
+            <span>Uploaded Files</span>
+            <strong aria-hidden="true">{uploadedFiles.length}</strong>
+          </h2>
           <FilePanel files={uploadedFiles} />
         </aside>
       </div>
@@ -509,7 +525,15 @@ function ReceiveScreen({
 }) {
   return (
     <section className="loop-page receive-page" aria-labelledby="receive-heading">
-      <h1 id="receive-heading">Receive</h1>
+      <ScreenHeader
+        id="receive-heading"
+        title="Receive"
+        metrics={[
+          { text: receiverActive ? 'Receiver ready' : 'Receiver idle', tone: receiverActive ? 'good' : 'quiet' },
+          { text: `Socket ${peerPort}` },
+          { text: `Inbox ${inboxCount}` },
+        ]}
+      />
 
       <section className="receive-board" aria-label="Receive controls">
         <ProtocolControls
@@ -529,7 +553,7 @@ function ReceiveScreen({
         {notice.tone !== 'quiet' ? <p className={`receive-note ${notice.tone}`}>{notice.text}</p> : null}
 
         <div className="received-frame">
-          <div className="received-title">RECEIVED FILES</div>
+          <PanelTitle label="RECEIVED FILES" count={receivedFiles.length} />
           <div className="received-body">
             <FilePanel files={receivedFiles.map(toPanelFile)} />
           </div>
@@ -584,7 +608,15 @@ function SharedScreen({
 
   return (
     <section className="loop-page shared-page" aria-labelledby="shared-heading">
-      <h1 id="shared-heading">Shared</h1>
+      <ScreenHeader
+        id="shared-heading"
+        title="Shared"
+        metrics={[
+          { text: notice.text, tone: notice.tone },
+          { text: `Shared ${sharedFiles.length}` },
+          { text: `Peers ${syncPeers.length}` },
+        ]}
+      />
 
       <section className="shared-board" aria-label="Shared folder controls">
         <ProtocolControls
@@ -637,16 +669,14 @@ function SharedScreen({
 
         <div className="shared-content-grid">
           <div className="shared-frame">
-            <div className="received-title">SHARED FILES</div>
+            <PanelTitle label="SHARED FILES" count={sharedFiles.length} />
             <div className="shared-body">
               <FilePanel files={sharedFiles.map(toPanelFile)} />
             </div>
           </div>
 
           <aside className="shared-frame sync-frame" aria-labelledby="sync-peers-heading">
-            <div className="received-title" id="sync-peers-heading">
-              SYNC PEERS
-            </div>
+            <PanelTitle id="sync-peers-heading" label="SYNC PEERS" count={syncPeers.length} />
             <div className="sync-body">
               {syncPeers.length > 0 ? (
                 <div className="sync-peer-list">
@@ -670,6 +700,30 @@ function SharedScreen({
         </div>
       </section>
     </section>
+  );
+}
+
+function ScreenHeader({ id, title, metrics }: { id: string; title: string; metrics: StatusMetric[] }) {
+  return (
+    <div className="screen-title-row">
+      <h1 id={id}>{title}</h1>
+      <div className="status-rail" aria-label={`${title} status`}>
+        {metrics.map((metric) => (
+          <span className={`status-pill ${metric.tone ?? 'quiet'}`} key={metric.text}>
+            {metric.text}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PanelTitle({ id, label, count }: { id?: string; label: string; count: number }) {
+  return (
+    <div className="received-title" id={id}>
+      <span>{label}</span>
+      <strong aria-label={`${label} count`}>{count}</strong>
+    </div>
   );
 }
 
@@ -718,7 +772,11 @@ function ProtocolControls({
 
 function FilePanel({ files }: { files: PanelFile[] }) {
   if (files.length === 0) {
-    return <div className="blank-panel" aria-label="No files" />;
+    return (
+      <div className="blank-panel" aria-label="No files">
+        <span>No files</span>
+      </div>
+    );
   }
 
   return (
