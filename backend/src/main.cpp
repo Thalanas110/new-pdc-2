@@ -96,9 +96,9 @@ struct AppState {
   std::vector<transfer::PeerEndpoint> sync_peers;
   std::map<std::string, SharedFileSignature> synced_shared_versions;
   std::string node_id = transfer::make_transfer_id();
-  std::string bind_host = "127.0.0.1";
+  std::string bind_host = "0.0.0.0";
   std::string advertised_host = "127.0.0.1";
-  bool allow_remote_peers = false;
+  bool allow_remote_peers = true;
   std::atomic_bool listener_active = false;
   std::atomic_bool running = true;
   int http_port = 8787;
@@ -1430,12 +1430,12 @@ int main(int argc, char* argv[]) {
   state.http_port = arg_value(argc, argv, "--http", parse_int(env_value("P2P_HTTP_PORT", "8787")).value_or(8787));
   state.transfer_port =
       arg_value(argc, argv, "--transfer", parse_int(env_value("P2P_TRANSFER_PORT", "8788")).value_or(8788));
-  state.bind_host = arg_string(argc, argv, "--bind", env_value("P2P_BIND_HOST", "127.0.0.1"));
+  state.bind_host = arg_string(argc, argv, "--bind", env_value("P2P_BIND_HOST", "0.0.0.0"));
   state.advertised_host = arg_string(argc, argv, "--advertise", env_value("P2P_ADVERTISED_HOST", state.bind_host));
   if (state.advertised_host == "0.0.0.0") {
     state.advertised_host = "127.0.0.1";
   }
-  state.allow_remote_peers = env_flag("P2P_ALLOW_REMOTE", false);
+  state.allow_remote_peers = env_flag("P2P_ALLOW_REMOTE", true);
   state.receive_dir = env_value("P2P_RECEIVE_DIR", (std::filesystem::current_path() / "backend" / "received").string());
   state.sent_dir = env_value("P2P_SENT_DIR", (std::filesystem::current_path() / "backend" / "sent").string());
   state.shared_dir = env_value("P2P_SHARED_DIR", (std::filesystem::current_path() / "shared").string());
