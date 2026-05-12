@@ -26,6 +26,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -112,6 +113,10 @@ struct HttpRequest {
   std::vector<char> body;
 };
 
+constexpr std::uint64_t shared_chunk_size = 256 * 1024;
+
+bool read_line(socket_t socket, std::string& line);
+
 std::string now_stamp() {
   const auto now = std::chrono::system_clock::now();
   const std::time_t time = std::chrono::system_clock::to_time_t(now);
@@ -189,6 +194,17 @@ std::optional<int> parse_int(const std::string& value) {
   return parsed;
 }
 
+std::optional<std::uint64_t> parse_u64(const std::string& value) {
+  std::uint64_t parsed = 0;
+  const auto* begin = value.data();
+  const auto* end = value.data() + value.size();
+  const auto result = std::from_chars(begin, end, parsed);
+  if (result.ec != std::errc{} || result.ptr != end) {
+    return std::nullopt;
+  }
+  return parsed;
+}
+
 std::string env_value(const char* name, const std::string& fallback) {
   const char* value = std::getenv(name);
   if (value == nullptr || std::strlen(value) == 0) {
@@ -225,6 +241,19 @@ bool send_all(socket_t socket, const char* data, std::size_t size) {
 
 bool send_text(socket_t socket, const std::string& text) {
   return send_all(socket, text.data(), text.size());
+}
+
+bool recv_exact(socket_t socket, char* data, std::size_t size) {
+  std::size_t received = 0;
+  while (received < size) {
+    const auto chunk = static_cast<int>(std::min<std::size_t>(size - received, 64 * 1024));
+    const int result = recv(socket, data + received, chunk, 0);
+    if (result <= 0) {
+      return false;
+    }
+    received += static_cast<std::size_t>(result);
+  }
+  return true;
 }
 
 std::string url_decode(const std::string& input) {
@@ -455,6 +484,154 @@ std::optional<std::filesystem::path> directory_for_kind(AppState& state, const s
   return std::nullopt;
 }
 
+std::string u64_hex(std::uint64_t value) {
+  std::ostringstream out;
+  out << std::hex << std::nouppercase << value;
+  return out.str();
+}
+
+std::uint64_t shared_chunk_count(std::uint64_t size, std::uint64_t chunk_size) {
+  if (size == 0 || chunk_size == 0) {
+    return 0;
+  }
+  return (size + chunk_size - 1) / chunk_size;
+}
+
+std::uint64_t shared_chunk_bytes(std::uint64_t index,
+                                 std::uint64_t total_size,
+                                 std::uint64_t chunk_size,
+                                 std::uint64_t chunk_count) {
+  if (chunk_size == 0 || index >= chunk_count) {
+    return 0;
+  }
+  const std::uint64_t offset = index * chunk_size;
+  if (offset >= total_size) {
+    return 0;
+  }
+  return std::min<std::uint64_t>(chunk_size, total_size - offset);
+}
+
+std::string shared_chunk_key(const std::string& safe_name, const SharedFileSignature& signature) {
+  return safe_name + "-" + std::to_string(signature.size) + "-" + u64_hex(signature.hash);
+}
+
+std::filesystem::path shared_chunk_root(const AppState& state,
+                                        const std::string& safe_name,
+                                        const SharedFileSignature& signature) {
+  return state.shared_dir / ".loopline-chunks" / shared_chunk_key(safe_name, signature);
+}
+
+std::filesystem::path shared_chunk_file(const AppState& state,
+                                        const std::string& safe_name,
+                                        const SharedFileSignature& signature,
+                                        std::uint64_t index) {
+  std::ostringstream file_name;
+  file_name << "chunk-" << std::setw(6) << std::setfill('0') << index << ".part";
+  return shared_chunk_root(state, safe_name, signature) / file_name.str();
+}
+
+std::filesystem::path shared_chunk_temp_file(const AppState& state,
+                                             const std::string& safe_name,
+                                             const SharedFileSignature& signature,
+                                             std::uint64_t index) {
+  std::ostringstream file_name;
+  file_name << "chunk-" << std::setw(6) << std::setfill('0') << index << ".tmp";
+  return shared_chunk_root(state, safe_name, signature) / file_name.str();
+}
+
+bool shared_chunk_available(const AppState& state,
+                            const std::string& safe_name,
+                            const SharedFileSignature& signature,
+                            std::uint64_t chunk_size,
+                            std::uint64_t chunk_count,
+                            std::uint64_t index) {
+  const std::filesystem::path chunk_path = shared_chunk_file(state, safe_name, signature, index);
+  std::error_code error;
+  if (!std::filesystem::exists(chunk_path, error) || error) {
+    return false;
+  }
+
+  const auto size = std::filesystem::file_size(chunk_path, error);
+  if (error) {
+    return false;
+  }
+  return size == shared_chunk_bytes(index, signature.size, chunk_size, chunk_count);
+}
+
+std::vector<std::uint64_t> shared_missing_chunks(const AppState& state,
+                                                 const std::string& safe_name,
+                                                 const SharedFileSignature& signature,
+                                                 std::uint64_t chunk_size,
+                                                 std::uint64_t chunk_count) {
+  std::vector<std::uint64_t> missing;
+  for (std::uint64_t index = 0; index < chunk_count; ++index) {
+    if (!shared_chunk_available(state, safe_name, signature, chunk_size, chunk_count, index)) {
+      missing.push_back(index);
+    }
+  }
+  return missing;
+}
+
+bool shared_has_all_chunks(const AppState& state,
+                           const std::string& safe_name,
+                           const SharedFileSignature& signature,
+                           std::uint64_t chunk_size,
+                           std::uint64_t chunk_count) {
+  return shared_missing_chunks(state, safe_name, signature, chunk_size, chunk_count).empty();
+}
+
+bool send_missing_chunks_response(socket_t socket, const std::vector<std::uint64_t>& missing) {
+  if (missing.empty()) {
+    return send_text(socket, "ALL\n\n");
+  }
+
+  if (!send_text(socket, "MISSING\n")) {
+    return false;
+  }
+  for (const auto index : missing) {
+    if (!send_text(socket, std::to_string(index) + "\n")) {
+      return false;
+    }
+  }
+  return send_text(socket, "\n");
+}
+
+std::optional<std::vector<std::uint64_t>> read_missing_chunks_response(socket_t socket) {
+  std::string mode;
+  if (!read_line(socket, mode)) {
+    return std::nullopt;
+  }
+
+  if (mode == "ALL") {
+    std::string blank;
+    if (!read_line(socket, blank)) {
+      return std::nullopt;
+    }
+    return std::vector<std::uint64_t>{};
+  }
+
+  if (mode != "MISSING") {
+    return std::nullopt;
+  }
+
+  std::vector<std::uint64_t> missing;
+  while (true) {
+    std::string line;
+    if (!read_line(socket, line)) {
+      return std::nullopt;
+    }
+    if (line.empty()) {
+      break;
+    }
+    const auto parsed = parse_u64(line);
+    if (!parsed) {
+      return std::nullopt;
+    }
+    missing.push_back(*parsed);
+  }
+  return missing;
+}
+
 std::string file_list_json(AppState& state, const std::string& kind) {
   const auto directory = directory_for_kind(state, kind);
   if (!directory) {
@@ -588,8 +765,9 @@ bool send_shared_file_to_peer(AppState& state,
                               const transfer::PeerEndpoint& peer,
                               const std::string& file_name,
                               const std::filesystem::path& file_path,
-                              const SharedFileSignature& signature) {
-  if (has_synced_shared_version(state, peer, file_name, signature)) {
+                              const SharedFileSignature& signature,
+                              bool force_probe = false) {
+  if (!force_probe && has_synced_shared_version(state, peer, file_name, signature)) {
     return true;
   }
 
@@ -597,6 +775,9 @@ bool send_shared_file_to_peer(AppState& state,
   if (!input) {
     return false;
   }
+
+  const std::uint64_t chunk_size = shared_chunk_size;
+  const std::uint64_t chunk_count = shared_chunk_count(signature.size, chunk_size);
 
   TransferRecord record;
   record.direction = "outgoing";
@@ -613,8 +794,10 @@ bool send_shared_file_to_peer(AppState& state,
     return false;
   }
 
-  const std::string header = "LOOPLINE-SHARED/1\nPUT\n" + file_name + "\n" + std::to_string(signature.size) +
-                             "\n" + state.node_id + "\n" + state.advertised_host + "\n" +
+  const std::string header = "LOOPLINE-SHARED/2\nPUT-CHUNKS\n" + file_name + "\n" +
+                             std::to_string(signature.size) + "\n" + std::to_string(signature.hash) + "\n" +
+                             std::to_string(chunk_size) + "\n" + std::to_string(chunk_count) + "\n" +
+                             state.node_id + "\n" + state.advertised_host + "\n" +
                              std::to_string(state.transfer_port) + "\n\n";
   if (!send_text(connected, header)) {
     close_socket(connected);
@@ -622,32 +805,69 @@ bool send_shared_file_to_peer(AppState& state,
     return false;
   }
 
+  const auto requested_chunks = read_missing_chunks_response(connected);
+  if (!requested_chunks) {
+    close_socket(connected);
+    update_transfer(state, id, 0, "failed", "Peer sent an invalid chunk request");
+    return false;
+  }
+
   std::uint64_t sent = 0;
-  std::vector<char> buffer(64 * 1024);
-  while (input) {
-    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-    const std::streamsize read = input.gcount();
-    if (read <= 0) {
-      break;
+  std::vector<char> buffer(static_cast<std::size_t>(chunk_size));
+  for (const std::uint64_t chunk_index : *requested_chunks) {
+    if (chunk_index >= chunk_count) {
+      close_socket(connected);
+      update_transfer(state, id, sent, "failed", "Peer requested an invalid chunk index");
+      return false;
     }
-    if (!send_all(connected, buffer.data(), static_cast<std::size_t>(read))) {
+
+    const std::uint64_t chunk_bytes = shared_chunk_bytes(chunk_index, signature.size, chunk_size, chunk_count);
+    if (chunk_bytes == 0) {
+      close_socket(connected);
+      update_transfer(state, id, sent, "failed", "Calculated an invalid chunk size");
+      return false;
+    }
+
+    input.clear();
+    input.seekg(static_cast<std::streamoff>(chunk_index * chunk_size), std::ios::beg);
+    if (!input) {
+      close_socket(connected);
+      update_transfer(state, id, sent, "failed", "Could not seek source shared file");
+      return false;
+    }
+
+    input.read(buffer.data(), static_cast<std::streamsize>(chunk_bytes));
+    if (input.gcount() != static_cast<std::streamsize>(chunk_bytes)) {
+      close_socket(connected);
+      update_transfer(state, id, sent, "failed", "Shared file changed while reading chunk");
+      return false;
+    }
+
+    const std::string chunk_header =
+        "CHUNK\n" + std::to_string(chunk_index) + "\n" + std::to_string(chunk_bytes) + "\n";
+    if (!send_text(connected, chunk_header) || !send_all(connected, buffer.data(), static_cast<std::size_t>(chunk_bytes))) {
       close_socket(connected);
       update_transfer(state, id, sent, "failed", "Peer closed shared sync");
       return false;
     }
-    sent += static_cast<std::uint64_t>(read);
-    update_transfer(state, id, sent, "transferring", "Shared " + transfer::format_bytes(sent));
+
+    sent += chunk_bytes;
+    update_transfer(state, id, sent, "transferring", "Shared chunked " + transfer::format_bytes(sent));
   }
 
-  if (sent != signature.size) {
+  if (!send_text(connected, "DONE\n\n")) {
     close_socket(connected);
-    update_transfer(state, id, sent, "failed", "Shared file changed while sending");
+    update_transfer(state, id, sent, "failed", "Could not finalize shared sync");
     return false;
   }
 
   close_socket(connected);
   mark_synced_shared_version(state, peer, file_name, signature);
-  update_transfer(state, id, sent, "complete", "Shared with " + record.peer);
+  if (requested_chunks->empty()) {
+    update_transfer(state, id, signature.size, "complete", "Peer already has all shared chunks");
+  } else {
+    update_transfer(state, id, sent, "complete", "Shared with " + record.peer);
+  }
   return true;
 }
 
@@ -699,7 +919,7 @@ SharedSyncSummary sync_shared_folder_once(AppState& state) {
 
     for (const auto& peer : peers) {
       ++summary.attempted;
-      if (send_shared_file_to_peer(state, peer, name, file_path, *signature)) {
+      if (send_shared_file_to_peer(state, peer, name, file_path, *signature, true)) {
         ++summary.synced;
       }
     }
@@ -721,10 +941,14 @@ std::string shared_sync_summary_json(const SharedSyncSummary& summary) {
 void shared_folder_watcher(AppState& state) {
   std::map<std::string, SharedFileProbe> last_probe;
   std::map<std::string, SharedFileSignature> known_versions;
+  auto last_reconcile_at = std::chrono::steady_clock::now();
+  constexpr auto reconcile_interval = std::chrono::seconds(20);
 
   while (state.running.load()) {
     const auto current_probe = scan_shared_folder(state.shared_dir);
     const auto peers = sync_peers_snapshot(state);
+    const auto now = std::chrono::steady_clock::now();
+    const bool reconcile_due = (now - last_reconcile_at) >= reconcile_interval;
 
     for (const auto& known_version : known_versions) {
       const auto& name = known_version.first;
@@ -757,12 +981,16 @@ void shared_folder_watcher(AppState& state) {
       }
 
       const auto known = known_versions.find(name);
+      bool changed = false;
       if (known == known_versions.end() || !(known->second == *signature)) {
         known_versions[name] = *signature;
+        changed = true;
       }
 
-      for (const auto& peer : peers) {
-        send_shared_file_to_peer(state, peer, name, file_path, *signature);
+      if (changed || reconcile_due) {
+        for (const auto& peer : peers) {
+          send_shared_file_to_peer(state, peer, name, file_path, *signature, reconcile_due);
+        }
       }
     }
 
@@ -772,6 +1000,10 @@ void shared_folder_watcher(AppState& state) {
       } else {
         ++it;
       }
+    }
+
+    if (reconcile_due) {
+      last_reconcile_at = now;
     }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(1200));
@@ -805,6 +1037,272 @@ std::optional<transfer::PeerEndpoint> source_peer_from_header(const std::string&
   }
   const std::string endpoint = host + ":" + (port.empty() ? std::to_string(fallback_port) : port);
   return transfer::parse_peer_endpoint(endpoint, fallback_port);
+}
+
+bool publish_shared_from_chunks(AppState& state,
+                                const std::string& safe_name,
+                                const SharedFileSignature& signature,
+                                std::uint64_t chunk_size,
+                                std::uint64_t chunk_count,
+                                std::string& error_message) {
+  const std::filesystem::path chunk_root = shared_chunk_root(state, safe_name, signature);
+  const std::filesystem::path destination = state.shared_dir / safe_name;
+  const std::filesystem::path temp_path =
+      state.shared_dir / (".loopline-tmp-" + transfer::make_transfer_id() + "-" + safe_name);
+
+  std::error_code error;
+  std::filesystem::create_directories(state.shared_dir, error);
+  if (error) {
+    error_message = "Could not create shared folder";
+    return false;
+  }
+
+  std::ofstream output(temp_path, std::ios::binary);
+  if (!output) {
+    error_message = "Could not open temporary shared output";
+    return false;
+  }
+
+  std::uint64_t hash = 14695981039346656037ull;
+  std::uint64_t assembled = 0;
+  std::vector<char> buffer(64 * 1024);
+
+  for (std::uint64_t index = 0; index < chunk_count; ++index) {
+    const std::uint64_t expected = shared_chunk_bytes(index, signature.size, chunk_size, chunk_count);
+    if (expected == 0) {
+      error_message = "Invalid shared chunk size while assembling";
+      output.close();
+      std::filesystem::remove(temp_path, error);
+      return false;
+    }
+
+    const std::filesystem::path chunk_path = shared_chunk_file(state, safe_name, signature, index);
+    std::ifstream input(chunk_path, std::ios::binary);
+    if (!input) {
+      error_message = "A required shared chunk file is missing";
+      output.close();
+      std::filesystem::remove(temp_path, error);
+      return false;
+    }
+
+    std::uint64_t chunk_read = 0;
+    while (chunk_read < expected) {
+      const std::size_t want = static_cast<std::size_t>(std::min<std::uint64_t>(buffer.size(), expected - chunk_read));
+      input.read(buffer.data(), static_cast<std::streamsize>(want));
+      const auto got = static_cast<std::size_t>(input.gcount());
+      if (got == 0) {
+        error_message = "Shared chunk data ended early";
+        output.close();
+        std::filesystem::remove(temp_path, error);
+        return false;
+      }
+      output.write(buffer.data(), static_cast<std::streamsize>(got));
+      if (!output) {
+        error_message = "Could not write assembled shared file";
+        output.close();
+        std::filesystem::remove(temp_path, error);
+        return false;
+      }
+      hash = fnv1a_update(hash, buffer.data(), got);
+      chunk_read += static_cast<std::uint64_t>(got);
+      assembled += static_cast<std::uint64_t>(got);
+    }
+  }
+
+  output.close();
+  if (assembled != signature.size || hash != signature.hash) {
+    error_message = "Shared chunks failed integrity verification";
+    std::filesystem::remove(temp_path, error);
+    return false;
+  }
+
+  const auto existing_signature = shared_file_signature(destination);
+  if (!existing_signature || *existing_signature != signature) {
+    std::filesystem::remove(destination, error);
+    error.clear();
+    std::filesystem::rename(temp_path, destination, error);
+    if (error) {
+      std::filesystem::remove(temp_path, error);
+      error_message = "Could not publish shared file";
+      return false;
+    }
+  } else {
+    std::filesystem::remove(temp_path, error);
+  }
+
+  std::filesystem::remove_all(chunk_root, error);
+  return true;
+}
+
+void handle_incoming_shared_put_chunks(AppState& state,
+                                       socket_t client,
+                                       const std::string& file_name,
+                                       const std::string& size_line,
+                                       const std::string& hash_line,
+                                       const std::string& chunk_size_line,
+                                       const std::string& chunk_count_line,
+                                       const std::string& peer,
+                                       const std::optional<transfer::PeerEndpoint>& source_peer) {
+  const auto parsed_size = parse_u64(size_line);
+  const auto parsed_hash = parse_u64(hash_line);
+  const auto parsed_chunk_size = parse_u64(chunk_size_line);
+  const auto parsed_chunk_count = parse_u64(chunk_count_line);
+  if (!parsed_size || !parsed_hash || !parsed_chunk_size || !parsed_chunk_count) {
+    close_socket(client);
+    return;
+  }
+
+  if (*parsed_chunk_size == 0 || *parsed_chunk_size > (8 * 1024 * 1024)) {
+    close_socket(client);
+    return;
+  }
+
+  const SharedFileSignature signature{*parsed_size, *parsed_hash};
+  const std::uint64_t expected_chunk_count = shared_chunk_count(signature.size, *parsed_chunk_size);
+  if (expected_chunk_count != *parsed_chunk_count) {
+    close_socket(client);
+    return;
+  }
+
+  const std::string safe_name = transfer::safe_file_name(file_name);
+  const std::uint64_t chunk_size = *parsed_chunk_size;
+  const std::uint64_t chunk_count = *parsed_chunk_count;
+
+  TransferRecord record;
+  record.direction = "incoming";
+  record.file_name = safe_name;
+  record.status = "transferring";
+  record.peer = peer;
+  record.size = signature.size;
+  record.message = "Receiving shared chunks";
+  const std::string id = add_transfer(state, record);
+
+  std::error_code error;
+  const std::filesystem::path chunk_root = shared_chunk_root(state, safe_name, signature);
+  std::filesystem::create_directories(chunk_root, error);
+  if (error) {
+    update_transfer(state, id, 0, "failed", "Could not create shared chunk folder");
+    close_socket(client);
+    return;
+  }
+
+  const auto initial_missing = shared_missing_chunks(state, safe_name, signature, chunk_size, chunk_count);
+  if (!send_missing_chunks_response(client, initial_missing)) {
+    update_transfer(state, id, 0, "failed", "Could not send missing chunk list");
+    close_socket(client);
+    return;
+  }
+
+  std::uint64_t received_total = 0;
+  std::vector<char> buffer(64 * 1024);
+  while (true) {
+    std::string command;
+    if (!read_line(client, command)) {
+      update_transfer(state, id, received_total, "failed", "Shared chunk stream closed early");
+      close_socket(client);
+      return;
+    }
+
+    if (command == "DONE") {
+      std::string blank;
+      if (!read_line(client, blank)) {
+        update_transfer(state, id, received_total, "failed", "Shared chunk stream closed early");
+      }
+      break;
+    }
+
+    if (command != "CHUNK") {
+      update_transfer(state, id, received_total, "failed", "Unexpected shared chunk command");
+      close_socket(client);
+      return;
+    }
+
+    std::string chunk_index_line;
+    std::string chunk_bytes_line;
+    if (!read_line(client, chunk_index_line) || !read_line(client, chunk_bytes_line)) {
+      update_transfer(state, id, received_total, "failed", "Malformed shared chunk header");
+      close_socket(client);
+      return;
+    }
+
+    const auto chunk_index = parse_u64(chunk_index_line);
+    const auto chunk_bytes = parse_u64(chunk_bytes_line);
+    if (!chunk_index || !chunk_bytes || *chunk_index >= chunk_count) {
+      update_transfer(state, id, received_total, "failed", "Invalid shared chunk index");
+      close_socket(client);
+      return;
+    }
+
+    const std::uint64_t expected_bytes = shared_chunk_bytes(*chunk_index, signature.size, chunk_size, chunk_count);
+    if (expected_bytes == 0 || expected_bytes != *chunk_bytes) {
+      update_transfer(state, id, received_total, "failed", "Invalid shared chunk size");
+      close_socket(client);
+      return;
+    }
+
+    const std::filesystem::path temp_chunk = shared_chunk_temp_file(state, safe_name, signature, *chunk_index);
+    const std::filesystem::path final_chunk = shared_chunk_file(state, safe_name, signature, *chunk_index);
+    std::ofstream chunk_output(temp_chunk, std::ios::binary);
+    if (!chunk_output) {
+      update_transfer(state, id, received_total, "failed", "Could not open shared chunk file");
+      close_socket(client);
+      return;
+    }
+
+    std::uint64_t chunk_received = 0;
+    while (chunk_received < *chunk_bytes) {
+      const std::size_t want = static_cast<std::size_t>(std::min<std::uint64_t>(buffer.size(), *chunk_bytes - chunk_received));
+      if (!recv_exact(client, buffer.data(), want)) {
+        chunk_output.close();
+        std::filesystem::remove(temp_chunk, error);
+        update_transfer(state, id, received_total, "failed", "Shared chunk stream closed early");
+        close_socket(client);
+        return;
+      }
+      chunk_output.write(buffer.data(), static_cast<std::streamsize>(want));
+      if (!chunk_output) {
+        chunk_output.close();
+        std::filesystem::remove(temp_chunk, error);
+        update_transfer(state, id, received_total, "failed", "Could not write shared chunk");
+        close_socket(client);
+        return;
+      }
+      chunk_received += static_cast<std::uint64_t>(want);
+      received_total += static_cast<std::uint64_t>(want);
+      update_transfer(state, id, received_total, "transferring",
+                      "Shared chunks " + transfer::format_bytes(received_total));
+    }
+
+    chunk_output.close();
+    std::filesystem::remove(final_chunk, error);
+    error.clear();
+    std::filesystem::rename(temp_chunk, final_chunk, error);
+    if (error) {
+      std::filesystem::remove(temp_chunk, error);
+      update_transfer(state, id, received_total, "failed", "Could not finalize shared chunk");
+      close_socket(client);
+      return;
+    }
+  }
+
+  std::string publish_error;
+  if (!shared_has_all_chunks(state, safe_name, signature, chunk_size, chunk_count)) {
+    update_transfer(state, id, received_total, "queued", "Partial shared chunks saved; waiting for another peer");
+    close_socket(client);
+    return;
+  }
+
+  if (!publish_shared_from_chunks(state, safe_name, signature, chunk_size, chunk_count, publish_error)) {
+    update_transfer(state, id, received_total, "failed", publish_error);
+    close_socket(client);
+    return;
+  }
+
+  if (source_peer) {
+    mark_synced_shared_version(state, *source_peer, safe_name, signature);
+  }
+  update_transfer(state, id, signature.size, "complete", "Saved to shared folder");
+  close_socket(client);
 }
 
 void handle_incoming_shared_delete(AppState& state,
@@ -936,6 +1434,37 @@ void handle_incoming_shared_put(AppState& state,
 void handle_incoming_transfer(AppState& state, socket_t client, const std::string& peer) {
   std::string magic;
   if (!read_line(client, magic)) {
+    close_socket(client);
+    return;
+  }
+
+  if (magic == "LOOPLINE-SHARED/2") {
+    std::string operation;
+    std::string file_name;
+    std::string size_line;
+    std::string hash_line;
+    std::string chunk_size_line;
+    std::string chunk_count_line;
+    std::string source_node;
+    std::string source_host;
+    std::string source_port;
+    std::string blank;
+    if (!read_line(client, operation) || !read_line(client, file_name) || !read_line(client, size_line) ||
+        !read_line(client, hash_line) || !read_line(client, chunk_size_line) || !read_line(client, chunk_count_line) ||
+        !read_line(client, source_node) || !read_line(client, source_host) || !read_line(client, source_port) ||
+        !read_line(client, blank)) {
+      close_socket(client);
+      return;
+    }
+
+    (void)source_node;
+    const auto source_peer = source_peer_from_header(source_host, source_port, state.transfer_port);
+    if (operation == "PUT-CHUNKS") {
+      handle_incoming_shared_put_chunks(
+          state, client, file_name, size_line, hash_line, chunk_size_line, chunk_count_line, peer, source_peer);
+      return;
+    }
+
     close_socket(client);
     return;
   }

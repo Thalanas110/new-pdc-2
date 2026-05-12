@@ -78,6 +78,14 @@ When Loopline is running:
 
 Updates resend automatically. Renames behave like a delete plus a new file. Deletes are sent to online sync peers.
 
+Shared sync now uses resumable chunking (torrent-style piece transfer):
+
+- Files are transferred in fixed chunks instead of one long stream.
+- The receiver keeps partial chunks if a sender disconnects.
+- On the next sync attempt, peers request only missing chunks and continue from where transfer stopped.
+- Any peer that already has the complete file can seed those missing chunks to other peers.
+- Even unchanged shared files are re-checked periodically so peers self-heal after disconnect/restart.
+
 To register a sync peer from the UI:
 
 1. Enter the other device's IP in **Peer host**.
