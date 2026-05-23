@@ -3,7 +3,7 @@
 #include <optional>
 #include <string>
 
-#include "transfer_core.hpp"
+#include "core/transfer_core.hpp"
 
 int main() {
   using transfer::format_bytes;
@@ -55,3 +55,4 @@ int main() {
   std::cout << "transfer_core_test passed\n";
   return 0;
 }
+
