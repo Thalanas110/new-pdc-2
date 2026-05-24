@@ -12,7 +12,8 @@ FROM gcc:13-bookworm AS backend
 WORKDIR /build
 COPY backend/src ./backend/src
 RUN g++ -std=c++20 -O2 -Wall -Wextra -Werror -I backend/src \
-  backend/src/main.cpp backend/src/transfer_core.cpp \
+  $(find backend/src -type f -name '*.cpp' | sort) \
+  -pthread \
   -static-libstdc++ -static-libgcc \
   -o /usr/local/bin/p2p_server
 
