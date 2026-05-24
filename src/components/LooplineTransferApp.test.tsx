@@ -42,6 +42,13 @@ describe('root transfer home', () => {
     expect(screen.getByText('SHARED FILES')).toBeInTheDocument();
     expect(screen.getByText('SYNC PEERS')).toBeInTheDocument();
     expect(screen.getByText('No sync peers')).toBeInTheDocument();
+    expect(screen.getByLabelText('Inbox count')).toHaveValue(0);
+
+    fireEvent.change(screen.getByLabelText('Inbox count'), {
+      target: { value: '7' },
+    });
+
+    expect(screen.getByLabelText('Inbox count')).toHaveValue(7);
 
     fireEvent.change(screen.getByLabelText('Shared file'), {
       target: {

@@ -58,6 +58,8 @@ export function HomeView() {
   const [sharedUploading, setSharedUploading] = useState(false);
   const [sharedUploadPercent, setSharedUploadPercent] = useState(0);
   const [sharedSyncing, setSharedSyncing] = useState(false);
+  const [sharedInboxCount, setSharedInboxCount] = useState('0');
+  const [sharedInboxEdited, setSharedInboxEdited] = useState(false);
 
   const refreshStatus = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -104,6 +106,12 @@ export function HomeView() {
   const receivedFiles = filesByKind.received;
   const sharedFiles = filesByKind.shared;
   const syncPeers = status?.syncPeers ?? [];
+
+  useEffect(() => {
+    if (!sharedInboxEdited) {
+      setSharedInboxCount(String(sharedFiles.length));
+    }
+  }, [sharedFiles.length, sharedInboxEdited]);
   const uploadedFiles = useMemo<PanelFile[]>(() => {
     const stagedFile = selectedFile
       ? [
@@ -261,6 +269,11 @@ export function HomeView() {
     }
   };
 
+  const onSharedInboxCountChange = (value: string) => {
+    setSharedInboxEdited(true);
+    setSharedInboxCount(value);
+  };
+
   const onSend = async () => {
     if (!selectedFile || !canSend) {
       return;
@@ -353,6 +366,7 @@ export function HomeView() {
       ) : (
         <SharedScreen
           inboxCount={sharedFiles.length}
+          sharedInboxCount={sharedInboxCount}
           notice={notice}
           peerHost={peerHost}
           peerPort={peerPort}
@@ -365,6 +379,7 @@ export function HomeView() {
           sharedSyncing={sharedSyncing}
           onPeerHostChange={setPeerHost}
           onPeerPortChange={setPeerPort}
+          onSharedInboxCountChange={onSharedInboxCountChange}
           onAddSyncPeer={onAddSyncPeer}
           onRemoveSyncPeer={onRemoveSyncPeer}
           onSyncShared={() => void runSharedSync()}
@@ -565,6 +580,7 @@ function ReceiveScreen({
 
 function SharedScreen({
   inboxCount,
+  sharedInboxCount,
   notice,
   peerHost,
   peerPort,
@@ -577,6 +593,7 @@ function SharedScreen({
   sharedSyncing,
   onPeerHostChange,
   onPeerPortChange,
+  onSharedInboxCountChange,
   onAddSyncPeer,
   onRemoveSyncPeer,
   onSyncShared,
@@ -584,6 +601,7 @@ function SharedScreen({
   onUploadShared,
 }: {
   inboxCount: number;
+  sharedInboxCount: string;
   notice: Notice;
   peerHost: string;
   peerPort: number;
@@ -596,6 +614,7 @@ function SharedScreen({
   sharedSyncing: boolean;
   onPeerHostChange: (value: string) => void;
   onPeerPortChange: (value: number) => void;
+  onSharedInboxCountChange: (value: string) => void;
   onAddSyncPeer: () => void;
   onRemoveSyncPeer: (peer: SyncPeer) => void;
   onSyncShared: () => void;
@@ -621,11 +640,13 @@ function SharedScreen({
       <section className="shared-board" aria-label="Shared folder controls">
         <ProtocolControls
           variant="receive"
-          inboxCount={inboxCount}
+          inboxCount={sharedInboxCount}
           peerHost={peerHost}
           peerPort={peerPort}
+          editableInboxCount
           onPeerHostChange={onPeerHostChange}
           onPeerPortChange={onPeerPortChange}
+          onInboxCountChange={onSharedInboxCountChange}
           action={
             <div className="shared-action-group">
               <button className="shared-sync-button" type="button" disabled={!canSyncShared} onClick={onSyncShared}>
@@ -730,17 +751,21 @@ function PanelTitle({ id, label, count }: { id?: string; label: string; count: n
 function ProtocolControls({
   action,
   inboxCount,
+  editableInboxCount = false,
   peerHost,
   peerPort,
   variant = 'transfer',
+  onInboxCountChange,
   onPeerHostChange,
   onPeerPortChange,
 }: {
   action?: ReactNode;
-  inboxCount: number;
+  inboxCount: number | string;
+  editableInboxCount?: boolean;
   peerHost: string;
   peerPort: number;
   variant?: 'transfer' | 'receive';
+  onInboxCountChange?: (value: string) => void;
   onPeerHostChange: (value: string) => void;
   onPeerPortChange: (value: number) => void;
 }) {
@@ -763,7 +788,17 @@ function ProtocolControls({
       </label>
       <label className="protocol-field">
         <span>Inbox count</span>
-        <output aria-label="Inbox count">{inboxCount}</output>
+        {editableInboxCount ? (
+          <input
+            aria-label="Inbox count"
+            type="number"
+            min={0}
+            value={inboxCount}
+            onChange={(event) => onInboxCountChange?.(event.target.value)}
+          />
+        ) : (
+          <output aria-label="Inbox count">{inboxCount}</output>
+        )}
       </label>
       {action ? <div className="protocol-action">{action}</div> : null}
     </div>
