@@ -1,5 +1,4 @@
 node_modules
-dist
 backend/*.exe
 backend/tests/*.exe
 backend/received
