@@ -23,6 +23,12 @@ bool SharedSyncService::publish_shared_from_chunks(const std::string& safe_name,
       state_.shared_dir / (".loopline-tmp-" + transfer::make_transfer_id() + "-" + safe_name);
 
   std::error_code error;
+  const auto current_signature = shared_file_signature(destination);
+  if (current_signature && *current_signature == signature) {
+    std::filesystem::remove_all(chunk_root, error);
+    return true;
+  }
+
   std::filesystem::create_directories(state_.shared_dir, error);
   if (error) {
     error_message = "Could not create shared folder";

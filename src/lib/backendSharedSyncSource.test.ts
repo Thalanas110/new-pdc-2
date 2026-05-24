@@ -3,10 +3,13 @@ import { readFileSync } from 'node:fs';
 
 describe('backend shared sync route', () => {
   it('keeps automatic shared sync and exposes a manual sync trigger', () => {
-    const source = readFileSync('backend/src/main.cpp', 'utf8');
+    const appSource = readFileSync('backend/src/app/backend_app.cpp', 'utf8');
+    const controllerSource = readFileSync('backend/src/controllers/http_controller.cpp', 'utf8');
+    const syncSource = readFileSync('backend/src/services/shared-sync/shared_sync_service_outbound.cpp', 'utf8');
 
-    expect(source).toMatch(/shared_folder_watcher[\s\S]*send_shared_file_to_peer/);
-    expect(source).toContain('sync_shared_folder_once');
-    expect(source).toContain('route == "/api/shared/sync"');
+    expect(appSource).toContain('std::thread shared_watcher(&SharedSyncService::watch_shared_folder, &shared_sync_service);');
+    expect(controllerSource).toContain('route == "/api/shared/sync"');
+    expect(syncSource).toContain('SharedSyncSummary SharedSyncService::sync_shared_folder_once()');
+    expect(syncSource).toContain('send_shared_file_to_peer(peer, name, file_path, *signature, true)');
   });
 });

@@ -15,7 +15,7 @@ describe('root transfer home', () => {
     expect(screen.getByRole('button', { name: 'Shared' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByLabelText('HTTP')).toHaveValue('127.0.0.1');
     expect(screen.getByLabelText('Socket')).toHaveValue(8788);
-    expect(screen.getByLabelText('Inbox')).toHaveValue('0');
+    expect(screen.getByLabelText('Inbox count')).toHaveTextContent('0');
     expect(screen.getByText(/Click anywhere to upload/i)).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { name: 'Uploaded Files' })).toHaveLength(2);
 

@@ -762,8 +762,8 @@ function ProtocolControls({
         />
       </label>
       <label className="protocol-field">
-        <span>Inbox</span>
-        <input aria-label="Inbox" value={inboxCount} readOnly />
+        <span>Inbox count</span>
+        <output aria-label="Inbox count">{inboxCount}</output>
       </label>
       {action ? <div className="protocol-action">{action}</div> : null}
     </div>

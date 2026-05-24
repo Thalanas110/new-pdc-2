@@ -152,6 +152,11 @@ std::vector<std::uint64_t> SharedSyncService::shared_missing_chunks(const std::s
                                                                     const SharedFileSignature& signature,
                                                                     std::uint64_t chunk_size,
                                                                     std::uint64_t chunk_count) const {
+  const auto existing_signature = shared_file_signature(state_.shared_dir / safe_name);
+  if (existing_signature && *existing_signature == signature) {
+    return {};
+  }
+
   std::vector<std::uint64_t> missing;
   for (std::uint64_t index = 0; index < chunk_count; ++index) {
     if (!shared_chunk_available(safe_name, signature, chunk_size, chunk_count, index)) {
@@ -165,6 +170,11 @@ bool SharedSyncService::shared_has_all_chunks(const std::string& safe_name,
                                               const SharedFileSignature& signature,
                                               std::uint64_t chunk_size,
                                               std::uint64_t chunk_count) const {
+  const auto existing_signature = shared_file_signature(state_.shared_dir / safe_name);
+  if (existing_signature && *existing_signature == signature) {
+    return true;
+  }
+
   for (std::uint64_t index = 0; index < chunk_count; ++index) {
     if (!shared_chunk_available(safe_name, signature, chunk_size, chunk_count, index)) {
       return false;
