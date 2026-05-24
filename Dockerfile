@@ -1,3 +1,12 @@
+FROM node:22-bookworm-slim AS frontend
+
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts ./
+COPY src ./src
+RUN npm run build
+
 FROM gcc:13-bookworm AS backend
 
 WORKDIR /build
@@ -14,7 +23,7 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends nginx ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
-COPY dist/client /usr/share/nginx/html
+COPY --from=frontend /app/dist/client /usr/share/nginx/html
 COPY --from=backend /usr/local/bin/p2p_server /usr/local/bin/p2p_server
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 COPY docker/entrypoint.sh /usr/local/bin/loopline-entrypoint
