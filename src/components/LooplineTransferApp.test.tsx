@@ -15,7 +15,7 @@ describe('root transfer home', () => {
     expect(screen.getByRole('button', { name: 'Shared' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByLabelText('HTTP')).toHaveValue('127.0.0.1');
     expect(screen.getByLabelText('Socket')).toHaveValue(8788);
-    expect(screen.getByLabelText('Inbox count')).toHaveTextContent('0');
+    expect(screen.getByLabelText('Inbox count')).toHaveValue(0);
     expect(screen.getByText(/Click anywhere to upload/i)).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { name: 'Uploaded Files' })).toHaveLength(2);
 
@@ -58,5 +58,31 @@ describe('root transfer home', () => {
 
     expect(screen.getByRole('button', { name: 'Upload to shared' })).toBeEnabled();
     expect(screen.getAllByText(/shared-note.txt/)).not.toHaveLength(0);
+  });
+
+  it('allows unlimited inbox counts across transfer, receive, and shared', () => {
+    render(<HomeView />);
+
+    fireEvent.change(screen.getByLabelText('Inbox count'), {
+      target: { value: '2500' },
+    });
+
+    expect(screen.getByLabelText('Inbox count')).toHaveValue(2500);
+    expect(screen.getByLabelText('Transfer status')).toHaveTextContent('Received 2500');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Receive' }));
+    fireEvent.change(screen.getByLabelText('Inbox count'), {
+      target: { value: '5000' },
+    });
+
+    expect(screen.getByLabelText('Inbox count')).toHaveValue(5000);
+    expect(screen.getByLabelText('Receive status')).toHaveTextContent('Inbox 5000');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Shared' }));
+    fireEvent.change(screen.getByLabelText('Inbox count'), {
+      target: { value: '10000' },
+    });
+
+    expect(screen.getByLabelText('Inbox count')).toHaveValue(10000);
   });
 });

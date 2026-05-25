@@ -54,6 +54,10 @@ export function HomeView() {
   const [dragging, setDragging] = useState(false);
   const [sending, setSending] = useState(false);
   const [uploadPercent, setUploadPercent] = useState(0);
+  const [transferInboxCount, setTransferInboxCount] = useState('0');
+  const [transferInboxEdited, setTransferInboxEdited] = useState(false);
+  const [receiveInboxCount, setReceiveInboxCount] = useState('0');
+  const [receiveInboxEdited, setReceiveInboxEdited] = useState(false);
   const [selectedSharedFile, setSelectedSharedFile] = useState<File | null>(null);
   const [sharedUploading, setSharedUploading] = useState(false);
   const [sharedUploadPercent, setSharedUploadPercent] = useState(0);
@@ -106,6 +110,18 @@ export function HomeView() {
   const receivedFiles = filesByKind.received;
   const sharedFiles = filesByKind.shared;
   const syncPeers = status?.syncPeers ?? [];
+
+  useEffect(() => {
+    if (!transferInboxEdited) {
+      setTransferInboxCount(String(receivedFiles.length));
+    }
+  }, [receivedFiles.length, transferInboxEdited]);
+
+  useEffect(() => {
+    if (!receiveInboxEdited) {
+      setReceiveInboxCount(String(receivedFiles.length));
+    }
+  }, [receivedFiles.length, receiveInboxEdited]);
 
   useEffect(() => {
     if (!sharedInboxEdited) {
@@ -274,6 +290,16 @@ export function HomeView() {
     setSharedInboxCount(value);
   };
 
+  const onTransferInboxCountChange = (value: string) => {
+    setTransferInboxEdited(true);
+    setTransferInboxCount(value);
+  };
+
+  const onReceiveInboxCountChange = (value: string) => {
+    setReceiveInboxEdited(true);
+    setReceiveInboxCount(value);
+  };
+
   const onSend = async () => {
     if (!selectedFile || !canSend) {
       return;
@@ -335,7 +361,7 @@ export function HomeView() {
       {activeView === 'transfer' ? (
         <TransferScreen
           dragging={dragging}
-          inboxCount={receivedFiles.length}
+          inboxCount={transferInboxCount}
           notice={notice}
           peerHost={peerHost}
           peerPort={peerPort}
@@ -346,6 +372,7 @@ export function HomeView() {
           canSend={canSend}
           onDrop={onDrop}
           onFileChange={onFileChange}
+          onInboxCountChange={onTransferInboxCountChange}
           onPeerHostChange={setPeerHost}
           onPeerPortChange={setPeerPort}
           onSend={onSend}
@@ -353,12 +380,13 @@ export function HomeView() {
         />
       ) : activeView === 'receive' ? (
         <ReceiveScreen
-          inboxCount={receivedFiles.length}
+          inboxCount={receiveInboxCount}
           notice={notice}
           peerHost={peerHost}
           peerPort={peerPort}
           receivedFiles={receivedFiles}
           receiverActive={Boolean(status?.listenerActive)}
+          onInboxCountChange={onReceiveInboxCountChange}
           onPeerHostChange={setPeerHost}
           onPeerPortChange={setPeerPort}
           onStartReceiver={onStartReceiver}
@@ -419,13 +447,14 @@ function TransferScreen({
   canSend,
   onDrop,
   onFileChange,
+  onInboxCountChange,
   onPeerHostChange,
   onPeerPortChange,
   onSend,
   onDragStateChange,
 }: {
   dragging: boolean;
-  inboxCount: number;
+  inboxCount: string;
   notice: Notice;
   peerHost: string;
   peerPort: number;
@@ -436,6 +465,7 @@ function TransferScreen({
   canSend: boolean;
   onDrop: (event: DragEvent<HTMLLabelElement>) => void;
   onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onInboxCountChange: (value: string) => void;
   onPeerHostChange: (value: string) => void;
   onPeerPortChange: (value: number) => void;
   onSend: () => void;
@@ -457,8 +487,10 @@ function TransferScreen({
         <div className="transfer-primary">
           <ProtocolControls
             inboxCount={inboxCount}
+            editableInboxCount
             peerHost={peerHost}
             peerPort={peerPort}
+            onInboxCountChange={onInboxCountChange}
             onPeerHostChange={onPeerHostChange}
             onPeerPortChange={onPeerPortChange}
           />
@@ -524,16 +556,18 @@ function ReceiveScreen({
   peerPort,
   receivedFiles,
   receiverActive,
+  onInboxCountChange,
   onPeerHostChange,
   onPeerPortChange,
   onStartReceiver,
 }: {
-  inboxCount: number;
+  inboxCount: string;
   notice: Notice;
   peerHost: string;
   peerPort: number;
   receivedFiles: TransferFileEntry[];
   receiverActive: boolean;
+  onInboxCountChange: (value: string) => void;
   onPeerHostChange: (value: string) => void;
   onPeerPortChange: (value: number) => void;
   onStartReceiver: () => void;
@@ -554,8 +588,10 @@ function ReceiveScreen({
         <ProtocolControls
           variant="receive"
           inboxCount={inboxCount}
+          editableInboxCount
           peerHost={peerHost}
           peerPort={peerPort}
+          onInboxCountChange={onInboxCountChange}
           onPeerHostChange={onPeerHostChange}
           onPeerPortChange={onPeerPortChange}
           action={
