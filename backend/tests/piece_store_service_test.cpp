@@ -28,9 +28,6 @@ std::vector<char> bytes_of(std::string_view text) {
 int main() {
   namespace fs = std::filesystem;
 
-  const fs::path root = fs::temp_directory_path() / "loopline-piece-store-test";
-  fs::remove_all(root);
-
   TorrentManifest manifest;
   manifest.torrent_id = "torrent-a";
   manifest.display_name = "demo.bin";
@@ -41,28 +38,42 @@ int main() {
   const auto piece1 = bytes_of("EFGH");
   manifest.piece_hashes = {fnv1a(piece0), fnv1a(piece1)};
 
-  PieceStoreService store(root);
-  assert(store.store_piece(manifest, 0, piece0) == true);
-  assert(store.has_piece(manifest, 0) == true);
-  assert(store.has_piece(manifest, 1) == false);
-  assert(store.has_piece(manifest, 2) == false);
+  const fs::path root = fs::temp_directory_path() / "loopline-piece-store-test";
+  fs::remove_all(root);
+  {
+    PieceStoreService store(root);
+    assert(store.store_piece(manifest, 0, piece0) == true);
+    assert(store.has_piece(manifest, 0) == true);
+    assert(store.has_piece(manifest, 1) == false);
+    assert(store.has_piece(manifest, 2) == false);
 
-  const auto missing = store.missing_pieces(manifest);
-  assert(missing.size() == 1);
-  assert(missing[0] == 1);
+    const auto missing = store.missing_pieces(manifest);
+    assert(missing.size() == 1);
+    assert(missing[0] == 1);
 
-  const auto stored_root = root / "pieces";
-  std::size_t stored_files = 0;
-  fs::path stored_piece_path;
-  for (const auto& entry : fs::recursive_directory_iterator(stored_root)) {
-    if (entry.is_regular_file()) {
-      ++stored_files;
-      stored_piece_path = entry.path();
-      assert(entry.path().filename() == "piece-000000.bin");
-      assert(entry.path().string().find("..") == std::string::npos);
+    const auto stored_root = root / "pieces";
+    std::size_t stored_files = 0;
+    fs::path stored_piece_path;
+    for (const auto& entry : fs::recursive_directory_iterator(stored_root)) {
+      if (entry.is_regular_file()) {
+        ++stored_files;
+        stored_piece_path = entry.path();
+        assert(entry.path().filename() == "piece-000000.bin");
+        assert(entry.path().string().find("..") == std::string::npos);
+      }
     }
+    assert(stored_files == 1);
+
+    {
+      std::ofstream corrupt_file(stored_piece_path, std::ios::binary | std::ios::trunc);
+      corrupt_file.write("ZZ", 2);
+    }
+    assert(store.has_piece(manifest, 0) == false);
+    const auto missing_after_corrupt = store.missing_pieces(manifest);
+    assert(missing_after_corrupt.size() == 2);
+    assert(missing_after_corrupt[0] == 0);
+    assert(missing_after_corrupt[1] == 1);
   }
-  assert(stored_files == 1);
 
   TorrentManifest malicious_manifest = manifest;
   malicious_manifest.torrent_id = "../../escape-me";
@@ -82,14 +93,33 @@ int main() {
   assert(!fs::exists(malicious_root / "escape-me"));
 
   {
-    std::ofstream corrupt_file(stored_piece_path, std::ios::binary | std::ios::trunc);
-    corrupt_file.write("ZZ", 2);
+    const fs::path out_of_bounds_root = fs::temp_directory_path() / "loopline-piece-store-oob";
+    fs::remove_all(out_of_bounds_root);
+    PieceStoreService store(out_of_bounds_root);
+    assert(store.store_piece(manifest, 2, piece0) == false);
+    assert(!fs::exists(out_of_bounds_root / "pieces"));
+    fs::remove_all(out_of_bounds_root);
   }
-  assert(store.has_piece(manifest, 0) == false);
-  const auto missing_after_corrupt = store.missing_pieces(manifest);
-  assert(missing_after_corrupt.size() == 2);
-  assert(missing_after_corrupt[0] == 0);
-  assert(missing_after_corrupt[1] == 1);
+
+  {
+    const fs::path wrong_size_root = fs::temp_directory_path() / "loopline-piece-store-wrong-size";
+    fs::remove_all(wrong_size_root);
+    PieceStoreService store(wrong_size_root);
+    assert(store.store_piece(manifest, 0, bytes_of("ABC")) == false);
+    assert(!fs::exists(wrong_size_root / "pieces"));
+    fs::remove_all(wrong_size_root);
+  }
+
+  {
+    const fs::path hash_mismatch_root = fs::temp_directory_path() / "loopline-piece-store-hash-mismatch";
+    fs::remove_all(hash_mismatch_root);
+    PieceStoreService store(hash_mismatch_root);
+    auto corrupted = piece0;
+    corrupted[0] = 'Z';
+    assert(store.store_piece(manifest, 0, corrupted) == false);
+    assert(!fs::exists(hash_mismatch_root / "pieces"));
+    fs::remove_all(hash_mismatch_root);
+  }
 
   fs::remove_all(root);
   fs::remove_all(malicious_root);
