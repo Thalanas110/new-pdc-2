@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -34,6 +35,12 @@ std::string now_stamp() {
   return out.str();
 }
 
+std::string hash_hex(std::uint64_t value) {
+  std::ostringstream out;
+  out << std::hex << std::setfill('0') << std::setw(16) << value;
+  return out.str();
+}
+
 }  // namespace
 
 std::optional<TorrentManifest> ManifestService::build_manifest(
@@ -45,20 +52,44 @@ std::optional<TorrentManifest> ManifestService::build_manifest(
     return std::nullopt;
   }
 
+  std::error_code file_size_error;
+  const auto file_size = std::filesystem::file_size(file_path, file_size_error);
+  if (file_size_error) {
+    return std::nullopt;
+  }
+
   TorrentManifest manifest;
   manifest.display_name = display_name;
   manifest.publisher_node_id = publisher_node_id;
   manifest.created_at = now_stamp();
-  manifest.file_size = static_cast<std::uint64_t>(std::filesystem::file_size(file_path));
+  manifest.file_size = static_cast<std::uint64_t>(file_size);
 
   std::vector<char> buffer(static_cast<std::size_t>(manifest.piece_size));
-  while (input) {
+  std::uint64_t total_read = 0;
+  while (true) {
     input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
     const auto read = static_cast<std::size_t>(input.gcount());
+    total_read += static_cast<std::uint64_t>(read);
+
+    if (read > 0) {
+      manifest.piece_hashes.push_back(hash_piece(buffer, read));
+    }
+
+    if (input.bad()) {
+      return std::nullopt;
+    }
+
+    if (input.fail() && !input.eof()) {
+      return std::nullopt;
+    }
+
     if (read == 0) {
       break;
     }
-    manifest.piece_hashes.push_back(hash_piece(buffer, read));
+  }
+
+  if (total_read != manifest.file_size) {
+    return std::nullopt;
   }
 
   manifest.piece_count = static_cast<std::uint64_t>(manifest.piece_hashes.size());
@@ -81,7 +112,7 @@ std::string ManifestService::manifest_json(const TorrentManifest& manifest) cons
     if (index > 0) {
       out << ',';
     }
-    out << manifest.piece_hashes[index];
+    out << '"' << hash_hex(manifest.piece_hashes[index]) << '"';
   }
 
   out << "],"
