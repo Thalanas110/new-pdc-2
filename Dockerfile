@@ -12,12 +12,27 @@ FROM gcc:13-bookworm AS backend
 WORKDIR /build
 COPY backend/src ./backend/src
 RUN g++ -std=c++20 -O2 -Wall -Wextra -Werror -I backend/src \
-  $(find backend/src -type f -name '*.cpp' | sort) \
+  backend/src/main.cpp \
+  backend/src/app/backend_app.cpp \
+  backend/src/models/app_state.cpp \
+  backend/src/controllers/http_controller.cpp \
+  backend/src/views/http_view.cpp \
+  backend/src/core/transfer_core.cpp \
+  backend/src/services/net-io/net_io.cpp \
+  backend/src/services/swarm/manifest_service.cpp \
+  backend/src/services/swarm/piece_store_service.cpp \
+  backend/src/services/swarm/discovery_service.cpp \
+  backend/src/services/swarm/swarm_protocol.cpp \
+  backend/src/services/swarm/piece_scheduler.cpp \
+  backend/src/services/swarm/catalog_service.cpp \
+  backend/src/services/swarm/swarm_transfer_service.cpp \
   -pthread \
   -static-libstdc++ -static-libgcc \
   -o /usr/local/bin/p2p_server
 
 FROM debian:bookworm-slim AS runtime
+
+WORKDIR /app
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends nginx ca-certificates \
@@ -30,7 +45,8 @@ COPY docker/entrypoint.sh /usr/local/bin/loopline-entrypoint
 
 RUN sed -i 's/\r$//' /usr/local/bin/loopline-entrypoint \
   && chmod +x /usr/local/bin/loopline-entrypoint \
-  && mkdir -p /data/received /data/sent /data/shared /run/nginx
+  && mkdir -p /data/received /data/sent /data/shared /data/torrents /app/backend /run/nginx \
+  && ln -sfn /data/torrents /app/backend/torrents
 
 ENV P2P_BIND_HOST=0.0.0.0 \
   P2P_HTTP_PORT=8787 \
@@ -41,6 +57,6 @@ ENV P2P_BIND_HOST=0.0.0.0 \
   P2P_SHARED_DIR=/data/shared
 
 EXPOSE 8080 8788
-VOLUME ["/data/received", "/data/sent", "/data/shared"]
+VOLUME ["/data/received", "/data/sent", "/data/shared", "/data/torrents"]
 
 CMD ["/bin/sh", "/usr/local/bin/loopline-entrypoint"]

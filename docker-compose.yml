@@ -19,4 +19,5 @@ services:
       - ./backend/received:/data/received
       - ./backend/sent:/data/sent
       - ./shared:/data/shared
+      - ./backend/torrents:/data/torrents
     restart: unless-stopped
