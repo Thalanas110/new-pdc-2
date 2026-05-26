@@ -40,6 +40,48 @@ std::string AppState::make_json_transfer(const TransferRecord& record) {
   return out.str();
 }
 
+std::string make_json_swarm_peer(const SwarmPeerRecord& peer) {
+  std::ostringstream out;
+  out << "{\"nodeId\":\"" << transfer::json_escape(peer.node_id) << "\",";
+  out << "\"host\":\"" << transfer::json_escape(peer.host) << "\",";
+  out << "\"port\":" << peer.port << ',';
+  out << "\"source\":\"" << transfer::json_escape(peer.source) << "\",";
+  out << "\"lastSeenAt\":\"" << transfer::json_escape(peer.last_seen_at) << "\",";
+  out << "\"reachable\":" << (peer.reachable ? "true" : "false") << '}';
+  return out.str();
+}
+
+std::string make_json_library_entry(const TorrentLibraryEntry& entry) {
+  std::ostringstream out;
+  out << "{\"torrentId\":\"" << transfer::json_escape(entry.torrent_id) << "\",";
+  out << "\"displayName\":\"" << transfer::json_escape(entry.display_name) << "\",";
+  out << "\"fileSize\":" << entry.file_size << ',';
+  out << "\"pieceCount\":" << entry.piece_count << ',';
+  out << "\"seederCount\":" << entry.seeder_count << ',';
+  out << "\"leecherCount\":" << entry.leecher_count << ',';
+  out << "\"localStatus\":\"" << transfer::json_escape(entry.local_status) << "\"}";
+  return out.str();
+}
+
+std::string make_json_download_session(const DownloadSessionRecord& session) {
+  std::ostringstream out;
+  out << "{\"torrentId\":\"" << transfer::json_escape(session.torrent_id) << "\",";
+  out << "\"displayName\":\"" << transfer::json_escape(session.display_name) << "\",";
+  out << "\"status\":\"" << transfer::json_escape(session.status) << "\",";
+  out << "\"fileSize\":" << session.file_size << ',';
+  out << "\"verifiedPieces\":" << session.verified_pieces << ',';
+  out << "\"pieceCount\":" << session.piece_count << ',';
+  out << "\"activePeers\":[";
+  for (std::size_t index = 0; index < session.active_peers.size(); ++index) {
+    if (index > 0) {
+      out << ',';
+    }
+    out << '"' << transfer::json_escape(session.active_peers[index]) << '"';
+  }
+  out << "]}";
+  return out.str();
+}
+
 std::string AppState::status_json() const {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -115,6 +157,21 @@ std::vector<transfer::PeerEndpoint> AppState::sync_peers_snapshot() const {
   return sync_peers_;
 }
 
+std::vector<SwarmPeerRecord> AppState::swarm_peers_snapshot() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return swarm_peers_;
+}
+
+std::vector<TorrentLibraryEntry> AppState::library_snapshot() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return library_;
+}
+
+std::vector<DownloadSessionRecord> AppState::download_sessions_snapshot() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return download_sessions_;
+}
+
 bool AppState::has_synced_shared_version(const transfer::PeerEndpoint& peer,
                                          const std::string& file_name,
                                          const SharedFileSignature& signature) const {
@@ -156,6 +213,88 @@ bool AppState::remove_sync_peer(const transfer::PeerEndpoint& peer) {
                    }),
                    sync_peers_.end());
   return sync_peers_.size() != old_size;
+}
+
+void AppState::upsert_swarm_peer(const SwarmPeerRecord& peer) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  SwarmPeerRecord updated = peer;
+  updated.last_seen_at = now_stamp();
+
+  const auto matches_peer = [&](const SwarmPeerRecord& existing) {
+    if (!updated.node_id.empty() && existing.node_id == updated.node_id) {
+      return true;
+    }
+    return existing.host == updated.host && existing.port == updated.port;
+  };
+
+  const auto found = std::find_if(swarm_peers_.begin(), swarm_peers_.end(), matches_peer);
+  if (found != swarm_peers_.end()) {
+    *found = updated;
+    return;
+  }
+
+  swarm_peers_.push_back(updated);
+}
+
+void AppState::replace_library_entry(const TorrentLibraryEntry& entry) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  const auto found = std::find_if(library_.begin(), library_.end(), [&](const auto& existing) {
+    return existing.torrent_id == entry.torrent_id;
+  });
+  if (found != library_.end()) {
+    *found = entry;
+    return;
+  }
+
+  library_.push_back(entry);
+}
+
+void AppState::replace_download_session(const DownloadSessionRecord& session) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  const auto found = std::find_if(download_sessions_.begin(),
+                                  download_sessions_.end(),
+                                  [&](const auto& existing) {
+                                    return existing.torrent_id == session.torrent_id;
+                                  });
+  if (found != download_sessions_.end()) {
+    *found = session;
+    return;
+  }
+
+  download_sessions_.push_back(session);
+}
+
+std::string AppState::library_json() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  std::ostringstream out;
+  out << '[';
+  for (std::size_t index = 0; index < library_.size(); ++index) {
+    if (index > 0) {
+      out << ',';
+    }
+    out << make_json_library_entry(library_[index]);
+  }
+  out << ']';
+  return out.str();
+}
+
+std::string AppState::downloads_json() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  std::ostringstream out;
+  out << '[';
+  for (std::size_t index = 0; index < download_sessions_.size(); ++index) {
+    if (index > 0) {
+      out << ',';
+    }
+    out << make_json_download_session(download_sessions_[index]);
+  }
+  out << ']';
+  return out.str();
 }
 
 std::optional<std::filesystem::path> AppState::directory_for_kind(const std::string& kind) const {
