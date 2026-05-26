@@ -79,7 +79,32 @@ std::map<std::string, std::vector<std::uint64_t>> PieceScheduler::plan_requests(
   std::vector<std::size_t> slot_match(slots.size(), unmatched);
 
   const auto augment = [&](auto&& self, std::size_t piece_pos, std::vector<char>& seen) -> bool {
-    for (const auto slot_index : adjacency[piece_pos]) {
+    std::vector<std::size_t> peer_loads(peers.size(), 0);
+    for (std::size_t slot_index = 0; slot_index < slot_match.size(); ++slot_index) {
+      if (slot_match[slot_index] != unmatched) {
+        ++peer_loads[slots[slot_index].peer_index];
+      }
+    }
+
+    std::vector<std::size_t> ordered_slots = adjacency[piece_pos];
+    std::sort(ordered_slots.begin(), ordered_slots.end(), [&](std::size_t lhs, std::size_t rhs) {
+      const auto& left = slots[lhs];
+      const auto& right = slots[rhs];
+      if (left.penalty != right.penalty) {
+        return left.penalty < right.penalty;
+      }
+      const std::size_t left_load = peer_loads[left.peer_index];
+      const std::size_t right_load = peer_loads[right.peer_index];
+      if (left_load != right_load) {
+        return left_load < right_load;
+      }
+      if (left.peer_key != right.peer_key) {
+        return left.peer_key < right.peer_key;
+      }
+      return left.ordinal < right.ordinal;
+    });
+
+    for (const auto slot_index : ordered_slots) {
       if (seen[slot_index] != 0) {
         continue;
       }

@@ -61,6 +61,17 @@ int main() {
   assert(penalty_plan.at("peer-b").size() == 1);
   assert(penalty_plan.at("peer-b")[0] == 0);
 
+  const std::vector<PeerPieceAvailability> symmetric_peers = {
+      {"peer-a", {true, true}, 0},
+      {"peer-b", {true, true}, 0},
+  };
+  const auto symmetric_plan = scheduler.plan_requests({0, 1}, symmetric_peers, 2);
+  assert(symmetric_plan.at("peer-a").size() == 1);
+  assert(symmetric_plan.at("peer-b").size() == 1);
+  assert((symmetric_plan.at("peer-a")[0] == 0 || symmetric_plan.at("peer-a")[0] == 1));
+  assert((symmetric_plan.at("peer-b")[0] == 0 || symmetric_plan.at("peer-b")[0] == 1));
+  assert(symmetric_plan.at("peer-a")[0] != symmetric_plan.at("peer-b")[0]);
+
   const auto hello = SwarmProtocol::encode_hello("node-a", "192.168.43.10", 8788);
   assert(hello == "SWARM/1\nHELLO\nNODE node-a\nHOST 192.168.43.10\nPORT 8788\n");
 
