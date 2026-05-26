@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.worktrees/
 
 backend/*.exe
 backend/tests/*.exe
