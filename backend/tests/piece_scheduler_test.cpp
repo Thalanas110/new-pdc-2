@@ -74,14 +74,33 @@ int main() {
   assert(line_count(injected_hello) == 5);
   assert(injected_hello.find("INJECT") != std::string::npos);
   assert(injected_hello.find("BAD") != std::string::npos);
+  assert(injected_hello.find('\r') == std::string::npos);
 
   const auto injected_manifest = SwarmProtocol::encode_manifest_request("torrent-a\nEXTRA");
   assert(line_count(injected_manifest) == 3);
   assert(injected_manifest.find("EXTRA") != std::string::npos);
+  assert(injected_manifest.find('\r') == std::string::npos);
 
   const auto injected_piece = SwarmProtocol::encode_piece_request("torrent-a\rMORE", 7);
   assert(line_count(injected_piece) == 4);
   assert(injected_piece.find("MORE") != std::string::npos);
+  assert(injected_piece.find('\r') == std::string::npos);
+
+  const std::vector<PeerPieceAvailability> matching_peers = {
+      {"peer-a", {true, false, true, true}, 0},
+      {"peer-b", {false, true, true, true}, 0},
+      {"peer-c", {true, false, false, false}, 0},
+      {"peer-d", {false, true, false, false}, 0},
+  };
+  const auto matching_plan = scheduler.plan_requests({0, 1, 2, 3}, matching_peers, 1);
+  std::vector<std::uint64_t> matching_assigned;
+  for (const auto& [peer_key, pieces] : matching_plan) {
+    (void)peer_key;
+    assert(pieces.size() <= 1);
+    matching_assigned.insert(matching_assigned.end(), pieces.begin(), pieces.end());
+  }
+  std::sort(matching_assigned.begin(), matching_assigned.end());
+  assert((matching_assigned == std::vector<std::uint64_t>{0, 1, 2, 3}));
 
   return 0;
 }
