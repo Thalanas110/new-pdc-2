@@ -14,15 +14,12 @@ class HttpController {
  public:
   struct Dependencies {
     std::function<std::string()> status_json;
-    std::function<std::optional<std::string>(const std::string&)> file_list_json;
-    std::function<void(socket_t, const std::string&, const std::string&)> send_file_inline;
-    std::function<void(socket_t, const std::string&, int, const std::string&, const std::vector<char>&)> send_file_to_peer;
-    std::function<std::string()> sync_shared_folder_json;
-    std::function<void(socket_t, const std::string&, const std::vector<char>&)> save_shared_upload;
+    std::function<std::string()> library_json;
+    std::function<std::string()> downloads_json;
+    std::function<void(socket_t, const std::string&, const std::vector<char>&)> publish_file;
+    std::function<void(const transfer::PeerEndpoint&)> bootstrap_peer;
+    std::function<void(const std::string&)> start_download;
     std::function<int()> transfer_port;
-    std::function<bool()> listener_active;
-    std::function<void(const transfer::PeerEndpoint&)> add_sync_peer;
-    std::function<void(const transfer::PeerEndpoint&)> remove_sync_peer;
     std::function<bool(const std::string&)> is_allowed_peer;
   };
 

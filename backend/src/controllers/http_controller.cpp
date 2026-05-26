@@ -21,67 +21,28 @@ void HttpController::handle_client(socket_t client) const {
     view_.send_json(client, 200, "OK", "{\"ok\":true}");
   } else if (request.method == "GET" && route == "/api/status") {
     view_.send_json(client, 200, "OK", deps_.status_json());
-  } else if (request.method == "GET" && route == "/api/files") {
-    const std::string kind = query_value(request.target, "kind").empty() ? "received" : query_value(request.target, "kind");
-    const auto listing = deps_.file_list_json(kind);
-    if (!listing.has_value()) {
-      view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Invalid file kind\"}");
-    } else {
-      view_.send_json(client, 200, "OK", *listing);
-    }
-  } else if (request.method == "GET" && route == "/api/files/open") {
-    const std::string kind = query_value(request.target, "kind").empty() ? "received" : query_value(request.target, "kind");
-    const std::string name = query_value(request.target, "name");
-    deps_.send_file_inline(client, kind, name);
-  } else if (request.method == "POST" && route == "/api/sync/peers") {
+  } else if (request.method == "GET" && route == "/api/library") {
+    view_.send_json(client, 200, "OK", deps_.library_json());
+  } else if (request.method == "GET" && route == "/api/downloads") {
+    view_.send_json(client, 200, "OK", deps_.downloads_json());
+  } else if (request.method == "POST" && route == "/api/swarm/bootstrap") {
     const std::string host = query_value(request.target, "host");
     const int port = parse_int(query_value(request.target, "port")).value_or(deps_.transfer_port());
     const auto peer = transfer::parse_peer_endpoint(host + ":" + std::to_string(port), deps_.transfer_port());
     if (!peer || !deps_.is_allowed_peer(peer->host)) {
-      view_.send_json(client,
-                      400,
-                      "Bad Request",
-                      "{\"ok\":false,\"error\":\"Use localhost or a private LAN peer that this backend allows\"}");
+      view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Use localhost or a private LAN peer\"}");
     } else {
-      deps_.add_sync_peer(*peer);
+      deps_.bootstrap_peer(*peer);
       view_.send_json(client, 200, "OK", deps_.status_json());
     }
-  } else if (request.method == "POST" && route == "/api/sync/peers/remove") {
-    const std::string host = query_value(request.target, "host");
-    const int port = parse_int(query_value(request.target, "port")).value_or(deps_.transfer_port());
-    const auto peer = transfer::parse_peer_endpoint(host + ":" + std::to_string(port), deps_.transfer_port());
-    if (!peer) {
-      view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Invalid sync peer\"}");
-    } else {
-      deps_.remove_sync_peer(*peer);
-      view_.send_json(client, 200, "OK", deps_.status_json());
-    }
-  } else if (request.method == "POST" && route == "/api/receive/start") {
-    const std::string port_value = query_value(request.target, "port");
-    const int requested_port = port_value.empty() ? deps_.transfer_port() : parse_int(port_value).value_or(deps_.transfer_port());
-    if (requested_port != deps_.transfer_port()) {
-      view_.send_json(client,
-                      409,
-                      "Conflict",
-                      "{\"ok\":false,\"error\":\"Restart the backend with the requested transfer port\"}");
-    } else if (deps_.listener_active()) {
-      view_.send_json(client, 200, "OK", "{\"ok\":true,\"message\":\"Receiver already active\"}");
-    } else {
-      view_.send_json(client, 503, "Service Unavailable", "{\"ok\":false,\"error\":\"Receiver is not active\"}");
-    }
-  } else if (request.method == "POST" && route == "/api/send") {
-    const std::string raw_file_name = url_decode(header_value(request, "x-file-name", "download.bin"));
+  } else if (request.method == "POST" && route == "/api/publish") {
+    const std::string raw_file_name = url_decode(header_value(request, "x-file-name", "publish.bin"));
     const std::string file_name = transfer::safe_file_name(raw_file_name);
-    const std::string peer_host = header_value(request, "x-peer-host", "127.0.0.1");
-    const int peer_port = parse_int(header_value(request, "x-peer-port", std::to_string(deps_.transfer_port())))
-                              .value_or(deps_.transfer_port());
-    deps_.send_file_to_peer(client, peer_host, peer_port, file_name, request.body);
-  } else if (request.method == "POST" && route == "/api/shared/sync") {
-    view_.send_json(client, 200, "OK", deps_.sync_shared_folder_json());
-  } else if (request.method == "POST" && route == "/api/shared/upload") {
-    const std::string raw_file_name = url_decode(header_value(request, "x-file-name", "shared-upload.bin"));
-    const std::string file_name = transfer::safe_file_name(raw_file_name);
-    deps_.save_shared_upload(client, file_name, request.body);
+    deps_.publish_file(client, file_name, request.body);
+  } else if (request.method == "POST" && route == "/api/downloads/start") {
+    const std::string torrent_id = query_value(request.target, "torrentId");
+    deps_.start_download(torrent_id);
+    view_.send_json(client, 200, "OK", deps_.downloads_json());
   } else {
     view_.send_json(client, 404, "Not Found", "{\"ok\":false,\"error\":\"Not found\"}");
   }

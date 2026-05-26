@@ -2,10 +2,12 @@
 
 #include "controllers/http_controller.hpp"
 #include "models/app_state.hpp"
-#include "services/file-vault/file_vault_service.hpp"
 #include "services/net-io/net_io.hpp"
-#include "services/shared-sync/shared_sync_service.hpp"
-#include "services/transfer/transfer_service.hpp"
+#include "services/swarm/catalog_service.hpp"
+#include "services/swarm/discovery_service.hpp"
+#include "services/swarm/manifest_service.hpp"
+#include "services/swarm/piece_store_service.hpp"
+#include "services/swarm/swarm_transfer_service.hpp"
 #include "views/http_view.hpp"
 
 #include <charconv>
@@ -71,7 +73,9 @@ std::string arg_string(int argc, char* argv[], const std::string& name, const st
   return fallback;
 }
 
-void add_sync_peers_from_list(AppState& state, const std::string& raw_peers) {
+void add_bootstrap_peers_from_list(DiscoveryService& discovery_service,
+                                   const AppState& state,
+                                   const std::string& raw_peers) {
   std::size_t start = 0;
   while (start <= raw_peers.size()) {
     std::size_t end = raw_peers.find(',', start);
@@ -83,7 +87,7 @@ void add_sync_peers_from_list(AppState& state, const std::string& raw_peers) {
     const std::string value = raw_peers.substr(start, end == std::string::npos ? std::string::npos : end - start);
     const auto peer = transfer::parse_peer_endpoint(value, state.transfer_port);
     if (peer && transfer::is_allowed_peer(peer->host, state.allow_remote_peers)) {
-      state.add_sync_peer(*peer);
+      discovery_service.bootstrap_peer(*peer);
     }
 
     if (end == std::string::npos) {
@@ -94,9 +98,9 @@ void add_sync_peers_from_list(AppState& state, const std::string& raw_peers) {
 }
 
 void http_server(AppState& state,
-                 FileVaultService& file_vault_service,
-                 TransferService& transfer_service,
-                 SharedSyncService& shared_sync_service) {
+                 CatalogService& catalog_service,
+                 DiscoveryService& discovery_service,
+                 SwarmTransferService& swarm_transfer_service) {
   const socket_t listener = netio::create_listener(state.bind_host, state.http_port);
   if (listener == invalid_socket) {
     std::cerr << "Could not start HTTP server on " << state.bind_host << ':' << state.http_port << '\n';
@@ -105,27 +109,16 @@ void http_server(AppState& state,
 
   HttpController::Dependencies deps;
   deps.status_json = [&state]() { return state.status_json(); };
-  deps.file_list_json = [&file_vault_service](const std::string& kind) {
-    return file_vault_service.file_list_json(kind);
+  deps.library_json = [&catalog_service]() { return catalog_service.library_json(); };
+  deps.downloads_json = [&swarm_transfer_service]() { return swarm_transfer_service.downloads_json(); };
+  deps.publish_file = [&swarm_transfer_service](socket_t client, const std::string& file_name, const std::vector<char>& body) {
+    swarm_transfer_service.publish_from_http(client, file_name, body);
   };
-  deps.send_file_inline = [&file_vault_service](socket_t client, const std::string& kind, const std::string& name) {
-    file_vault_service.send_file_inline(client, kind, name);
-  };
-  deps.send_file_to_peer = [&transfer_service](socket_t client,
-                                               const std::string& host,
-                                               int port,
-                                               const std::string& file_name,
-                                               const std::vector<char>& body) {
-    transfer_service.send_file_to_peer(client, host, port, file_name, body);
-  };
-  deps.sync_shared_folder_json = [&shared_sync_service]() { return shared_sync_service.sync_shared_folder_json(); };
-  deps.save_shared_upload = [&file_vault_service](socket_t client, const std::string& file_name, const std::vector<char>& body) {
-    file_vault_service.save_shared_upload(client, file_name, body);
+  deps.bootstrap_peer = [&discovery_service](const transfer::PeerEndpoint& peer) { discovery_service.bootstrap_peer(peer); };
+  deps.start_download = [&swarm_transfer_service](const std::string& torrent_id) {
+    swarm_transfer_service.start_download_by_id(torrent_id);
   };
   deps.transfer_port = [&state]() { return state.transfer_port; };
-  deps.listener_active = [&state]() { return state.listener_active.load(); };
-  deps.add_sync_peer = [&state](const transfer::PeerEndpoint& peer) { state.add_sync_peer(peer); };
-  deps.remove_sync_peer = [&state](const transfer::PeerEndpoint& peer) { state.remove_sync_peer(peer); };
   deps.is_allowed_peer = [&state](const std::string& host) { return transfer::is_allowed_peer(host, state.allow_remote_peers); };
 
   auto controller = std::make_shared<HttpController>(HttpView{}, std::move(deps));
@@ -167,19 +160,16 @@ int BackendApp::run(int argc, char* argv[]) {
   state.receive_dir = env_value("P2P_RECEIVE_DIR", (std::filesystem::current_path() / "backend" / "received").string());
   state.sent_dir = env_value("P2P_SENT_DIR", (std::filesystem::current_path() / "backend" / "sent").string());
   state.shared_dir = env_value("P2P_SHARED_DIR", (std::filesystem::current_path() / "shared").string());
-  add_sync_peers_from_list(state, env_value("P2P_SYNC_PEERS", ""));
   std::filesystem::create_directories(state.receive_dir);
   std::filesystem::create_directories(state.sent_dir);
   std::filesystem::create_directories(state.shared_dir);
 
-  FileVaultService file_vault_service(state);
-  SharedSyncService shared_sync_service(state);
-  TransferService transfer_service(state, shared_sync_service);
-
-  std::thread receiver(&TransferService::transfer_listener, &transfer_service);
-  receiver.detach();
-  std::thread shared_watcher(&SharedSyncService::watch_shared_folder, &shared_sync_service);
-  shared_watcher.detach();
+  ManifestService manifest_service;
+  PieceStoreService piece_store_service(std::filesystem::current_path() / "backend" / "torrents");
+  CatalogService catalog_service(state);
+  DiscoveryService discovery_service(state, 8789);
+  SwarmTransferService swarm_transfer_service(state, catalog_service, manifest_service, piece_store_service);
+  add_bootstrap_peers_from_list(discovery_service, state, env_value("P2P_SYNC_PEERS", ""));
 
   std::cout << "Loopline P2P receiver: " << state.advertised_host << ':' << state.transfer_port << '\n';
   std::cout << "Bind host: " << state.bind_host
@@ -187,7 +177,7 @@ int BackendApp::run(int argc, char* argv[]) {
   std::cout << "Received files: " << state.receive_dir.string() << '\n';
   std::cout << "Sent files: " << state.sent_dir.string() << '\n';
   std::cout << "Shared folder: " << state.shared_dir.string() << '\n';
-  http_server(state, file_vault_service, transfer_service, shared_sync_service);
+  http_server(state, catalog_service, discovery_service, swarm_transfer_service);
 
 #ifdef _WIN32
   WSACleanup();
