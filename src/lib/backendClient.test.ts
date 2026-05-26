@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { syncSharedFolder, uploadSharedFile } from './backendClient';
+import { bootstrapPeer, fetchLibrary, publishFile, startDownload } from './backendClient';
 
 type HeaderMap = Record<string, string>;
 
@@ -35,17 +35,17 @@ class FakeXMLHttpRequest {
   }
 }
 
-describe('backend client shared uploads', () => {
+describe('backend client swarm calls', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     FakeXMLHttpRequest.latest = null;
   });
 
-  it('uploads a file directly into the shared folder endpoint', async () => {
+  it('publishes a file to the publish endpoint', async () => {
     vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest);
-    const file = new File(['shared contents'], 'shared note.txt', { type: 'text/plain' });
+    const file = new File(['swarm contents'], 'swarm-note.txt', { type: 'text/plain' });
 
-    await uploadSharedFile({
+    await publishFile({
       file,
       onProgress: vi.fn(),
     });
@@ -53,24 +53,44 @@ describe('backend client shared uploads', () => {
     const request = FakeXMLHttpRequest.latest;
     expect(request).not.toBeNull();
     expect(request?.method).toBe('POST');
-    expect(request?.url).toBe('/api/shared/upload');
+    expect(request?.url).toBe('/api/publish');
     expect(request?.requestHeaders['X-File-Name']).toBe(encodeURIComponent(file.name));
     expect(request?.requestHeaders['Content-Type']).toBe('application/octet-stream');
     expect(request?.requestBody).toBe(file);
   });
 
-  it('requests an immediate shared folder sync', async () => {
+  it('bootstraps a peer through the swarm bootstrap endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await bootstrapPeer({ host: '127.0.0.1', port: 9090 });
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/swarm/bootstrap?host=127.0.0.1&port=9090', {
+      method: 'POST',
+    });
+  });
+
+  it('fetches the torrent library from the library endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response('{"ok":true}', {
+      new Response('{"library":[]}', {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    await syncSharedFolder();
+    await fetchLibrary();
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/shared/sync', {
+    expect(fetchMock).toHaveBeenCalledWith('/api/library');
+  });
+
+  it('starts a download through the swarm downloads endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await startDownload('torrent-a');
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/downloads/start?torrentId=torrent-a', {
       method: 'POST',
     });
   });

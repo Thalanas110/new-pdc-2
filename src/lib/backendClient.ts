@@ -1,4 +1,4 @@
-import type { BackendStatus, FileKind, SyncPeer, TransferFileEntry } from './transferModel';
+import type { BackendStatus, FileKind, SyncPeer, TorrentLibraryEntry, TransferFileEntry } from './transferModel';
 import { getTransferPercent } from './transferModel';
 
 export async function fetchStatus(signal?: AbortSignal): Promise<BackendStatus> {
@@ -6,7 +6,25 @@ export async function fetchStatus(signal?: AbortSignal): Promise<BackendStatus> 
   if (!response.ok) {
     throw new Error(`Status request failed: ${response.status}`);
   }
-  return response.json() as Promise<BackendStatus>;
+  const payload = (await response.json()) as Partial<BackendStatus>;
+  return {
+    nodeId: payload.nodeId ?? '',
+    host: payload.host ?? '',
+    httpPort: payload.httpPort ?? 0,
+    transferPort: payload.transferPort ?? 0,
+    peers: payload.peers ?? [],
+    library: payload.library ?? [],
+    downloads: payload.downloads ?? [],
+    receiveDir: payload.receiveDir ?? '',
+    sentDir: payload.sentDir,
+    sharedDir: payload.sharedDir,
+    listenerActive: payload.listenerActive ?? false,
+    allowRemotePeers: payload.allowRemotePeers,
+    bindHost: payload.bindHost,
+    advertisedHost: payload.advertisedHost,
+    syncPeers: payload.syncPeers,
+    transfers: payload.transfers ?? [],
+  };
 }
 
 export async function startReceiver(port: number): Promise<void> {
@@ -19,6 +37,19 @@ export async function startReceiver(port: number): Promise<void> {
   }
 }
 
+export async function fetchLibrary(): Promise<TorrentLibraryEntry[]> {
+  const response = await fetch('/api/library');
+  if (!response.ok) {
+    throw new Error(`Library request failed: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as TorrentLibraryEntry[] | { library?: TorrentLibraryEntry[]; torrents?: TorrentLibraryEntry[] };
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  return payload.library ?? payload.torrents ?? [];
+}
+
 export async function fetchFiles(kind: FileKind, signal?: AbortSignal): Promise<TransferFileEntry[]> {
   const response = await fetch(`/api/files?kind=${kind}`, { signal });
   if (!response.ok) {
@@ -26,6 +57,25 @@ export async function fetchFiles(kind: FileKind, signal?: AbortSignal): Promise<
   }
   const payload = (await response.json()) as { files?: TransferFileEntry[] };
   return payload.files ?? [];
+}
+
+export type BootstrapPeer = {
+  host: string;
+  port: number;
+};
+
+export async function bootstrapPeer(peer: BootstrapPeer): Promise<void> {
+  const params = new URLSearchParams({
+    host: peer.host,
+    port: String(peer.port),
+  });
+  const response = await fetch(`/api/swarm/bootstrap?${params.toString()}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `Swarm bootstrap failed: ${response.status}`);
+  }
 }
 
 export async function addSyncPeer(peer: SyncPeer): Promise<void> {
@@ -56,6 +106,16 @@ export async function removeSyncPeer(peer: SyncPeer): Promise<void> {
   }
 }
 
+export async function startDownload(torrentId: string): Promise<void> {
+  const response = await fetch(`/api/downloads/start?torrentId=${encodeURIComponent(torrentId)}`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(body || `Download request failed: ${response.status}`);
+  }
+}
+
 export type SendFileOptions = {
   file: File;
   peerHost: string;
@@ -64,6 +124,11 @@ export type SendFileOptions = {
 };
 
 export type UploadSharedFileOptions = {
+  file: File;
+  onProgress: (percent: number) => void;
+};
+
+export type PublishFileOptions = {
   file: File;
   onProgress: (percent: number) => void;
 };
@@ -84,6 +149,32 @@ export async function syncSharedFolder(): Promise<SharedSyncResult> {
     throw new Error(body || `Shared sync failed: ${response.status}`);
   }
   return response.json() as Promise<SharedSyncResult>;
+}
+
+export function publishFile({ file, onProgress }: PublishFileOptions): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', '/api/publish');
+    request.setRequestHeader('X-File-Name', encodeURIComponent(file.name));
+    request.setRequestHeader('Content-Type', 'application/octet-stream');
+
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress(getTransferPercent(event.loaded, event.total));
+      }
+    };
+
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        resolve();
+        return;
+      }
+      reject(new Error(request.responseText || `Publish failed: ${request.status}`));
+    };
+
+    request.onerror = () => reject(new Error('Could not reach the C++ backend'));
+    request.send(file);
+  });
 }
 
 export function uploadSharedFile({ file, onProgress }: UploadSharedFileOptions): Promise<string> {

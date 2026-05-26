@@ -27,6 +27,7 @@ describe('transfer model', () => {
   it('only treats loopback addresses as local peers', () => {
     expect(isLocalhostAddress('127.0.0.1')).toBe(true);
     expect(isLocalhostAddress('localhost')).toBe(true);
+    expect(isLocalhostAddress('::1')).toBe(true);
     expect(isLocalhostAddress('0.0.0.0')).toBe(false);
     expect(isLocalhostAddress('192.168.1.7')).toBe(false);
   });
@@ -49,6 +50,7 @@ describe('transfer model', () => {
   it('builds a stable receiver URL for localhost peers', () => {
     expect(buildPeerUrl('127.0.0.1', 8787)).toBe('http://127.0.0.1:8787');
     expect(buildPeerUrl('localhost', 9000)).toBe('http://localhost:9000');
+    expect(buildPeerUrl('::1', 8788)).toBe('http://[::1]:8788');
   });
 
   it('chooses inline preview modes from file metadata', () => {

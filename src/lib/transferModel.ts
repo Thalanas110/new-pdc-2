@@ -63,7 +63,12 @@ export function isAllowedPeerAddress(value: string): boolean {
 }
 
 export function buildPeerUrl(host: string, port: number): string {
-  const normalizedHost = host.trim().toLowerCase() === 'localhost' ? 'localhost' : host.trim();
+  const trimmedHost = host.trim();
+  if (trimmedHost.includes(':') && !trimmedHost.startsWith('[') && !trimmedHost.endsWith(']')) {
+    return `http://[${trimmedHost}]:${port}`;
+  }
+
+  const normalizedHost = trimmedHost.toLowerCase() === 'localhost' ? 'localhost' : trimmedHost;
   return `http://${normalizedHost}:${port}`;
 }
 
@@ -122,11 +127,43 @@ export type SyncPeer = {
   port: number;
 };
 
+export type SwarmPeerEntry = {
+  nodeId: string;
+  host: string;
+  port: number;
+  source: 'discovered' | 'bootstrap';
+  lastSeenAt: string;
+  reachable: boolean;
+};
+
+export type TorrentLibraryEntry = {
+  torrentId: string;
+  displayName: string;
+  fileSize: number;
+  pieceCount: number;
+  seederCount: number;
+  leecherCount: number;
+  localStatus: 'available' | 'discovering' | 'downloading' | 'seeding' | 'complete' | 'failed';
+};
+
+export type TorrentDownloadEntry = {
+  torrentId: string;
+  displayName: string;
+  status: 'discovering' | 'downloading' | 'verifying' | 'seeding' | 'complete' | 'failed';
+  fileSize: number;
+  verifiedPieces: number;
+  pieceCount: number;
+  activePeers: string[];
+};
+
 export type BackendStatus = {
   nodeId: string;
   host: string;
   httpPort: number;
   transferPort: number;
+  peers: SwarmPeerEntry[];
+  library: TorrentLibraryEntry[];
+  downloads: TorrentDownloadEntry[];
   receiveDir: string;
   sentDir?: string;
   sharedDir?: string;
