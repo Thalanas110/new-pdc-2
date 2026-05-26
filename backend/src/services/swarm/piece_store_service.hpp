@@ -13,6 +13,7 @@ class PieceStoreService {
   bool store_piece(const TorrentManifest& manifest, std::uint64_t piece_index, const std::vector<char>& bytes);
   bool has_piece(const TorrentManifest& manifest, std::uint64_t piece_index) const;
   std::vector<std::uint64_t> missing_pieces(const TorrentManifest& manifest) const;
+  // Reserved for the higher-level file assembler; this primitive only persists and validates pieces.
   std::optional<std::filesystem::path> assemble_file(const TorrentManifest& manifest);
 
  private:
