@@ -17,5 +17,8 @@ void DiscoveryService::note_peer_hello(const std::string& node_id,
 }
 
 void DiscoveryService::bootstrap_peer(const transfer::PeerEndpoint& peer) {
-  note_peer_hello("bootstrap-" + peer.host, peer.host, peer.port, "bootstrap");
+  note_peer_hello("bootstrap-" + transfer::peer_endpoint_key(peer.host, peer.port),
+                  peer.host,
+                  peer.port,
+                  "bootstrap");
 }

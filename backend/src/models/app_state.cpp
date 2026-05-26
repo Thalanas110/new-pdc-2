@@ -23,6 +23,10 @@ std::string now_stamp() {
   return out.str();
 }
 
+bool is_bootstrap_peer(const SwarmPeerRecord& peer) {
+  return peer.source == "bootstrap";
+}
+
 }  // namespace
 
 std::string AppState::make_json_transfer(const TransferRecord& record) {
@@ -230,6 +234,10 @@ void AppState::upsert_swarm_peer(const SwarmPeerRecord& peer) {
 
   const auto found = std::find_if(swarm_peers_.begin(), swarm_peers_.end(), matches_peer);
   if (found != swarm_peers_.end()) {
+    if (!is_bootstrap_peer(*found) && is_bootstrap_peer(updated)) {
+      updated.node_id = found->node_id;
+      updated.source = found->source;
+    }
     *found = updated;
     return;
   }
