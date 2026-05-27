@@ -19,6 +19,7 @@ RUN g++ -std=c++20 -O2 -Wall -Wextra -Werror -I backend/src \
   backend/src/views/http_view.cpp \
   backend/src/core/transfer_core.cpp \
   backend/src/services/net-io/net_io.cpp \
+  backend/src/services/file-vault/file_vault_service.cpp \
   backend/src/services/swarm/manifest_service.cpp \
   backend/src/services/swarm/piece_store_service.cpp \
   backend/src/services/swarm/discovery_service.cpp \

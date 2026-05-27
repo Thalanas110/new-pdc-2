@@ -7,6 +7,7 @@ describe('docker swarm packaging', () => {
     const compose = readFileSync('docker-compose.yml', 'utf8');
     const entrypoint = readFileSync('docker/entrypoint.sh', 'utf8');
 
+    expect(dockerfile).toContain('backend/src/services/file-vault/file_vault_service.cpp');
     expect(dockerfile).toContain('backend/src/services/swarm/swarm_transfer_service.cpp');
     expect(dockerfile).not.toContain("find backend/src -type f -name '*.cpp'");
     expect(dockerfile).not.toContain('shared_sync_service_core.cpp');
