@@ -156,8 +156,14 @@ int main() {
   assert(leecher_complete);
   assert(read_bytes(leecher.state.receive_dir / "demo.bin") == payload);
 
-  assert(fanout.transfer.bootstrap_peer(transfer::PeerEndpoint{"127.0.0.1", 9411}));
   assert(fanout.transfer.bootstrap_peer(transfer::PeerEndpoint{"127.0.0.1", 9412}));
+  const bool transitive_peer_visible = wait_for(
+      [&]() {
+        const auto* peer = find_peer_by_endpoint(fanout.state.swarm_peers_snapshot(), "127.0.0.1", 9411);
+        return peer != nullptr && peer->reachable;
+      },
+      std::chrono::seconds(4));
+  assert(transitive_peer_visible);
   const bool two_seeders_visible = wait_for(
       [&]() {
         const auto library = fanout.state.library_snapshot();

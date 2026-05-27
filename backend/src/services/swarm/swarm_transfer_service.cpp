@@ -25,6 +25,7 @@ namespace {
 
 constexpr std::size_t kSocketChunkSize = 64 * 1024;
 constexpr std::size_t kMaxInFlightPerPeer = 2;
+constexpr auto kPeerProbeCooldown = std::chrono::seconds(8);
 
 std::string sanitize_field(std::string value) {
   for (char& ch : value) {
@@ -243,6 +244,39 @@ void SwarmTransferService::update_download_session(const TorrentManifest& manife
   state_.replace_download_session(session);
 }
 
+bool SwarmTransferService::should_schedule_peer_probe(const transfer::PeerEndpoint& peer) {
+  if (same_endpoint(peer, local_endpoint())) {
+    return false;
+  }
+
+  const auto key = peer_key(peer);
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(peer_probe_mutex_);
+  const auto found = next_peer_probe_at_.find(key);
+  if (found != next_peer_probe_at_.end() && found->second > now) {
+    return false;
+  }
+  next_peer_probe_at_[key] = now + kPeerProbeCooldown;
+  return true;
+}
+
+void SwarmTransferService::note_bootstrap_attempt(const transfer::PeerEndpoint& peer) {
+  if (same_endpoint(peer, local_endpoint())) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(peer_probe_mutex_);
+  next_peer_probe_at_[peer_key(peer)] = std::chrono::steady_clock::now() + kPeerProbeCooldown;
+}
+
+void SwarmTransferService::schedule_peer_probe(const transfer::PeerEndpoint& peer) {
+  if (!should_schedule_peer_probe(peer)) {
+    return;
+  }
+
+  std::thread([this, peer]() { (void)bootstrap_peer(peer); }).detach();
+}
+
 void SwarmTransferService::transfer_listener() {
   const socket_t listener = netio::create_listener(state_.bind_host, state_.transfer_port);
   if (listener == invalid_socket) {
@@ -359,6 +393,7 @@ bool SwarmTransferService::fetch_peers_from_peer(const transfer::PeerEndpoint& p
     return false;
   }
 
+  std::vector<transfer::PeerEndpoint> discovered_peers;
   for (std::uint64_t index = 0; index < *peer_count; ++index) {
     std::string node_id;
     std::string host;
@@ -388,15 +423,29 @@ bool SwarmTransferService::fetch_peers_from_peer(const transfer::PeerEndpoint& p
     record.source = "discovered";
     record.reachable = false;
     state_.upsert_swarm_peer(record);
+    if (!same_endpoint(*discovered, peer)) {
+      discovered_peers.push_back(*discovered);
+    }
   }
 
   std::string done;
   const bool ok = netio::read_line(connected, done) && done == "DONE";
   close_socket(connected);
+  if (ok) {
+    for (const auto& discovered : discovered_peers) {
+      schedule_peer_probe(discovered);
+    }
+  }
   return ok;
 }
 
 bool SwarmTransferService::bootstrap_peer(const transfer::PeerEndpoint& peer) {
+  if (same_endpoint(peer, local_endpoint())) {
+    return false;
+  }
+
+  note_bootstrap_attempt(peer);
+
   SwarmPeerRecord record;
   record.node_id = "bootstrap-" + peer_key(peer);
   record.host = peer.host;
@@ -780,6 +829,7 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
         record.source = "discovered";
         record.reachable = true;
         state_.upsert_swarm_peer(record);
+        schedule_peer_probe(*peer);
       }
       (void)netio::send_text(client, "SWARM/1\nOK\n\n");
     }

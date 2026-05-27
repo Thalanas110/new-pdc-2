@@ -7,6 +7,9 @@
 #include "services/swarm/piece_store_service.hpp"
 #include "shared/net_socket.hpp"
 
+#include <chrono>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -24,6 +27,7 @@ class SwarmTransferService {
   void start_download(const TorrentManifest& manifest);
   void start_download_by_id(const std::string& torrent_id);
   void publish_from_http(socket_t client, const std::string& file_name, const std::vector<char>& body);
+  void schedule_peer_probe(const transfer::PeerEndpoint& peer);
   void send_local_file_inline(socket_t client, const std::string& torrent_id) const;
   void send_local_file_attachment(socket_t client, const std::string& torrent_id) const;
   std::string downloads_json() const;
@@ -51,10 +55,14 @@ class SwarmTransferService {
   void send_local_file_with_disposition(socket_t client,
                                         const std::string& torrent_id,
                                         const std::string& disposition) const;
+  bool should_schedule_peer_probe(const transfer::PeerEndpoint& peer);
+  void note_bootstrap_attempt(const transfer::PeerEndpoint& peer);
 
   AppState& state_;
   CatalogService& catalog_;
   ManifestService& manifest_service_;
   PieceStoreService& piece_store_;
   PieceScheduler scheduler_;
+  mutable std::mutex peer_probe_mutex_;
+  std::map<std::string, std::chrono::steady_clock::time_point> next_peer_probe_at_;
 };

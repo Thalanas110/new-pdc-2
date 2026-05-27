@@ -250,10 +250,10 @@ int BackendApp::run(int argc, char* argv[]) {
   DiscoveryService discovery_service(state, 8789);
   SwarmTransferService swarm_transfer_service(state, catalog_service, manifest_service, piece_store_service);
   FileVaultService file_vault_service(state);
-  add_bootstrap_peers_from_list(discovery_service, state, env_value("P2P_SYNC_PEERS", ""));
   discovery_service.set_peer_detected_callback([&swarm_transfer_service](const transfer::PeerEndpoint& peer) {
-    (void)swarm_transfer_service.bootstrap_peer(peer);
+    swarm_transfer_service.schedule_peer_probe(peer);
   });
+  add_bootstrap_peers_from_list(discovery_service, state, env_value("P2P_SYNC_PEERS", ""));
   discovery_service.start();
   std::thread([&swarm_transfer_service]() { swarm_transfer_service.transfer_listener(); }).detach();
 
