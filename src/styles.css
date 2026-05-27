@@ -489,6 +489,8 @@ a {
   line-height: 0.95;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .dropzone-card p,
@@ -699,6 +701,14 @@ a {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
+}
+
+.peer-card__row > strong,
+.download-card__head > div,
+.torrent-card__head > div {
+  min-width: 0;
+  flex: 1 1 0;
 }
 
 .peer-card strong,
@@ -709,6 +719,9 @@ a {
   line-height: 1;
   letter-spacing: 0.03em;
   text-transform: uppercase;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .peer-state,
