@@ -23,8 +23,50 @@ void HttpController::handle_client(socket_t client) const {
     view_.send_json(client, 200, "OK", deps_.status_json());
   } else if (request.method == "GET" && route == "/api/library") {
     view_.send_json(client, 200, "OK", deps_.library_json());
+  } else if (request.method == "GET" && route == "/api/library/open") {
+    const std::string torrent_id = query_value(request.target, "torrentId");
+    if (torrent_id.empty()) {
+      view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Missing torrent id\"}");
+    } else {
+      deps_.open_library_file(client, torrent_id);
+    }
+  } else if (request.method == "GET" && route == "/api/library/download") {
+    const std::string torrent_id = query_value(request.target, "torrentId");
+    if (torrent_id.empty()) {
+      view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Missing torrent id\"}");
+    } else {
+      deps_.download_library_file(client, torrent_id);
+    }
   } else if (request.method == "GET" && route == "/api/downloads") {
     view_.send_json(client, 200, "OK", deps_.downloads_json());
+  } else if (request.method == "GET" && route == "/api/files") {
+    const std::string kind = query_value(request.target, "kind");
+    if (kind.empty()) {
+      view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Missing file kind\"}");
+    } else {
+      const auto payload = deps_.files_json(kind);
+      if (!payload) {
+        view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Invalid file kind\"}");
+      } else {
+        view_.send_json(client, 200, "OK", *payload);
+      }
+    }
+  } else if (request.method == "GET" && route == "/api/files/open") {
+    const std::string kind = query_value(request.target, "kind");
+    const std::string name = query_value(request.target, "name");
+    if (kind.empty() || name.empty()) {
+      view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Missing file parameters\"}");
+    } else {
+      deps_.open_file(client, kind, name);
+    }
+  } else if (request.method == "GET" && route == "/api/files/download") {
+    const std::string kind = query_value(request.target, "kind");
+    const std::string name = query_value(request.target, "name");
+    if (kind.empty() || name.empty()) {
+      view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Missing file parameters\"}");
+    } else {
+      deps_.download_file(client, kind, name);
+    }
   } else if (request.method == "POST" && route == "/api/swarm/bootstrap") {
     const std::string host = query_value(request.target, "host");
     const int port = parse_int(query_value(request.target, "port")).value_or(deps_.transfer_port());

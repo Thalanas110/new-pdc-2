@@ -222,6 +222,22 @@ std::vector<std::uint64_t> PieceStoreService::missing_pieces(const TorrentManife
   return missing;
 }
 
+std::optional<std::filesystem::path> PieceStoreService::assembled_file_if_present(const TorrentManifest& manifest) const {
+  const auto path = assembled_file_path(manifest);
+  std::error_code exists_error;
+  if (!std::filesystem::exists(path, exists_error) || exists_error) {
+    return std::nullopt;
+  }
+
+  std::error_code size_error;
+  const auto size = std::filesystem::file_size(path, size_error);
+  if (size_error || size != manifest.file_size) {
+    return std::nullopt;
+  }
+
+  return path;
+}
+
 std::optional<std::filesystem::path> PieceStoreService::assemble_file(const TorrentManifest& manifest) {
   if (!missing_pieces(manifest).empty()) {
     return std::nullopt;

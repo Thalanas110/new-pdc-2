@@ -77,12 +77,18 @@ std::optional<std::string> FileVaultService::file_list_json(const std::string& k
       const auto size = entry.file_size(error);
       const auto modified = entry.last_write_time(error);
       const auto modified_tick = error ? 0ll : static_cast<long long>(modified.time_since_epoch().count());
+      const std::string content_type = transfer::content_type_for_file(name);
+      const std::string encoded_name = url_encode(name);
 
-      out << "{\"name\":\"" << transfer::json_escape(name) << "\",";
+      out << "{\"kind\":\"" << transfer::json_escape(kind) << "\",";
+      out << "\"name\":\"" << transfer::json_escape(name) << "\",";
       out << "\"size\":" << (error ? 0 : static_cast<unsigned long long>(size)) << ',';
-      out << "\"modified\":" << modified_tick << ',';
-      out << "\"previewUrl\":\"/api/files/open?kind=" << transfer::json_escape(kind)
-          << "&name=" << transfer::json_escape(url_encode(name)) << "\"}";
+      out << "\"modifiedAt\":\"" << modified_tick << "\",";
+      out << "\"contentType\":\"" << transfer::json_escape(content_type) << "\",";
+      out << "\"url\":\"/api/files/open?kind=" << transfer::json_escape(kind)
+          << "&name=" << transfer::json_escape(encoded_name) << "\",";
+      out << "\"downloadUrl\":\"/api/files/download?kind=" << transfer::json_escape(kind)
+          << "&name=" << transfer::json_escape(encoded_name) << "\"}";
     }
     iterator.increment(error);
   }
@@ -91,9 +97,10 @@ std::optional<std::string> FileVaultService::file_list_json(const std::string& k
   return out.str();
 }
 
-void FileVaultService::send_file_inline(socket_t client,
-                                        const std::string& kind,
-                                        const std::string& raw_name) const {
+void FileVaultService::send_file_with_disposition(socket_t client,
+                                                   const std::string& kind,
+                                                   const std::string& raw_name,
+                                                   const std::string& disposition) const {
   const auto directory = state_.directory_for_kind(kind);
   if (!directory) {
     view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Invalid file kind\"}");
@@ -118,7 +125,7 @@ void FileVaultService::send_file_inline(socket_t client,
   headers << "HTTP/1.1 200 OK\r\n";
   headers << "Content-Type: " << transfer::content_type_for_file(file_name) << "\r\n";
   headers << "Content-Length: " << size << "\r\n";
-  headers << "Content-Disposition: inline; filename=\"" << transfer::json_escape(file_name) << "\"\r\n";
+  headers << "Content-Disposition: " << disposition << "; filename=\"" << transfer::json_escape(file_name) << "\"\r\n";
   headers << "Connection: close\r\n";
   headers << "Access-Control-Allow-Origin: *\r\n\r\n";
   if (!netio::send_text(client, headers.str())) {
@@ -133,6 +140,18 @@ void FileVaultService::send_file_inline(socket_t client,
       return;
     }
   }
+}
+
+void FileVaultService::send_file_inline(socket_t client,
+                                        const std::string& kind,
+                                        const std::string& raw_name) const {
+  send_file_with_disposition(client, kind, raw_name, "inline");
+}
+
+void FileVaultService::send_file_attachment(socket_t client,
+                                            const std::string& kind,
+                                            const std::string& raw_name) const {
+  send_file_with_disposition(client, kind, raw_name, "attachment");
 }
 
 void FileVaultService::save_shared_upload(socket_t client,

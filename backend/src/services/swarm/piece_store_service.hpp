@@ -15,6 +15,7 @@ class PieceStoreService {
   bool has_piece(const TorrentManifest& manifest, std::uint64_t piece_index) const;
   std::optional<std::vector<char>> load_piece(const TorrentManifest& manifest, std::uint64_t piece_index) const;
   std::vector<std::uint64_t> missing_pieces(const TorrentManifest& manifest) const;
+  std::optional<std::filesystem::path> assembled_file_if_present(const TorrentManifest& manifest) const;
   std::optional<std::filesystem::path> assemble_file(const TorrentManifest& manifest);
 
  private:

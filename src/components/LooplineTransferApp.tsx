@@ -2,6 +2,7 @@ import { type ChangeEvent, useEffect, useState } from 'react';
 
 import {
   bootstrapPeer,
+  fetchFiles,
   fetchLibrary,
   fetchStatus,
   publishFile,
@@ -9,18 +10,21 @@ import {
 } from '../lib/backendClient';
 import {
   type BackendStatus,
+  type FileKind,
+  type TransferFileEntry,
   type TorrentDownloadEntry,
   type TorrentLibraryEntry,
   formatBytes,
   isAllowedPeerAddress,
 } from '../lib/transferModel';
 import { DownloadsView } from './torrent/DownloadsView';
+import { FilesView } from './torrent/FilesView';
 import { GuidePanel } from './torrent/GuidePanel';
 import { LibraryView } from './torrent/LibraryView';
 import { PublishView } from './torrent/PublishView';
 import { SwarmView } from './torrent/SwarmView';
 
-type ViewMode = 'publish' | 'swarm' | 'library' | 'downloads';
+type ViewMode = 'publish' | 'swarm' | 'library' | 'downloads' | 'files';
 
 function emptyStatus(): BackendStatus {
   return {
@@ -49,6 +53,8 @@ export function HomeView() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishPercent, setPublishPercent] = useState(0);
+  const [fileKind, setFileKind] = useState<FileKind>('received');
+  const [files, setFiles] = useState<TransferFileEntry[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +87,39 @@ export function HomeView() {
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    if (activeView !== 'files') {
+      return;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const refresh = async () => {
+      try {
+        const nextFiles = await fetchFiles(fileKind, controller.signal);
+        if (!cancelled) {
+          setFiles(nextFiles);
+        }
+      } catch {
+        if (!cancelled) {
+          setFiles([]);
+        }
+      }
+    };
+
+    void refresh();
+    const timer = window.setInterval(() => {
+      void refresh();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [activeView, fileKind]);
 
   const onFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -169,6 +208,8 @@ export function HomeView() {
     currentView = <LibraryView library={library} onStartDownload={onStartDownload} />;
   } else if (activeView === 'downloads') {
     currentView = <DownloadsView downloads={downloads} />;
+  } else if (activeView === 'files') {
+    currentView = <FilesView kind={fileKind} files={files} onKindChange={setFileKind} />;
   }
 
   return (
@@ -231,6 +272,9 @@ export function HomeView() {
         </button>
         <button type="button" aria-pressed={activeView === 'downloads'} onClick={() => setActiveView('downloads')}>
           Downloads
+        </button>
+        <button type="button" aria-pressed={activeView === 'files'} onClick={() => setActiveView('files')}>
+          Files
         </button>
       </nav>
 

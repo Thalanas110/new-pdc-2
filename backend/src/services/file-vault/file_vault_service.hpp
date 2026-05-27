@@ -15,6 +15,7 @@ class FileVaultService {
 
   std::optional<std::string> file_list_json(const std::string& kind) const;
   void send_file_inline(socket_t client, const std::string& kind, const std::string& raw_name) const;
+  void send_file_attachment(socket_t client, const std::string& kind, const std::string& raw_name) const;
   void save_shared_upload(socket_t client, const std::string& file_name, const std::vector<char>& body);
 
   static std::filesystem::path unique_received_path(const std::filesystem::path& directory,
@@ -22,6 +23,10 @@ class FileVaultService {
 
  private:
   static std::string url_encode(const std::string& input);
+  void send_file_with_disposition(socket_t client,
+                                  const std::string& kind,
+                                  const std::string& raw_name,
+                                  const std::string& disposition) const;
 
   AppState& state_;
   HttpView view_;

@@ -3,6 +3,7 @@
 #include "core/transfer_core.hpp"
 #include "services/net-io/net_io.hpp"
 #include "services/swarm/swarm_protocol.hpp"
+#include "views/http_view.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -939,6 +940,88 @@ void SwarmTransferService::publish_from_http(socket_t client,
 
   const std::string response = "{\"ok\":true,\"torrentId\":\"" + transfer::json_escape(manifest->torrent_id) + "\"}";
   (void)send_http_json_response(client, 200, "OK", response);
+}
+
+void SwarmTransferService::send_local_file_inline(socket_t client, const std::string& torrent_id) const {
+  send_local_file_with_disposition(client, torrent_id, "inline");
+}
+
+void SwarmTransferService::send_local_file_attachment(socket_t client, const std::string& torrent_id) const {
+  send_local_file_with_disposition(client, torrent_id, "attachment");
+}
+
+void SwarmTransferService::send_local_file_with_disposition(socket_t client,
+                                                            const std::string& torrent_id,
+                                                            const std::string& disposition) const {
+  HttpView view;
+  const auto manifest = catalog_.find_manifest(torrent_id);
+  if (!manifest) {
+    view.send_json(client, 404, "Not Found", "{\"ok\":false,\"error\":\"Unknown torrent\"}");
+    return;
+  }
+
+  const std::string file_name = transfer::safe_file_name(manifest->display_name);
+
+  auto find_local_file = [&](const std::filesystem::path& root) -> std::optional<std::filesystem::path> {
+    std::error_code error;
+    const auto candidate = root / file_name;
+    if (!std::filesystem::exists(candidate, error) || error) {
+      return std::nullopt;
+    }
+    if (!std::filesystem::is_regular_file(candidate, error) || error) {
+      return std::nullopt;
+    }
+    return candidate;
+  };
+
+  auto file_path = find_local_file(state_.receive_dir);
+  if (!file_path) {
+    file_path = find_local_file(state_.sent_dir);
+  }
+  if (!file_path) {
+    file_path = piece_store_.assembled_file_if_present(*manifest);
+  }
+  if (!file_path) {
+    file_path = piece_store_.assemble_file(*manifest);
+  }
+  if (!file_path) {
+    view.send_json(client, 409, "Conflict", "{\"ok\":false,\"error\":\"File not available locally\"}");
+    return;
+  }
+
+  std::ifstream input(*file_path, std::ios::binary);
+  if (!input) {
+    view.send_json(client, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"Could not open file\"}");
+    return;
+  }
+
+  std::error_code size_error;
+  const auto size = std::filesystem::file_size(*file_path, size_error);
+  if (size_error) {
+    view.send_json(client, 500, "Internal Server Error", "{\"ok\":false,\"error\":\"Could not read file\"}");
+    return;
+  }
+
+  std::ostringstream headers;
+  headers << "HTTP/1.1 200 OK\r\n";
+  headers << "Content-Type: " << transfer::content_type_for_file(file_name) << "\r\n";
+  headers << "Content-Length: " << size << "\r\n";
+  headers << "Content-Disposition: " << disposition << "; filename=\"" << transfer::json_escape(file_name)
+          << "\"\r\n";
+  headers << "Connection: close\r\n";
+  headers << "Access-Control-Allow-Origin: *\r\n\r\n";
+  if (!netio::send_text(client, headers.str())) {
+    return;
+  }
+
+  std::vector<char> buffer(64 * 1024);
+  while (input) {
+    input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const std::streamsize read = input.gcount();
+    if (read > 0 && !netio::send_all(client, buffer.data(), static_cast<std::size_t>(read))) {
+      return;
+    }
+  }
 }
 
 std::string SwarmTransferService::downloads_json() const {

@@ -26,34 +26,59 @@ export function LibraryView({ library, onStartDownload }: LibraryViewProps) {
         </div>
       ) : (
         <ul className="torrent-grid">
-          {library.map((entry) => (
-            <li key={entry.torrentId} className="torrent-card">
-              <div className="torrent-card__head">
-                <div>
-                  <p className="torrent-card__label">Torrent entry</p>
-                  <strong>{entry.displayName}</strong>
+          {library.map((entry) => {
+            const isLocal = entry.localStatus === 'seeding' || entry.localStatus === 'complete';
+            const previewUrl = `/api/library/open?torrentId=${encodeURIComponent(entry.torrentId)}`;
+            const downloadUrl = `/api/library/download?torrentId=${encodeURIComponent(entry.torrentId)}`;
+            const downloadLabel = entry.localStatus === 'failed' ? 'Retry download' : 'Download';
+
+            return (
+              <li key={entry.torrentId} className="torrent-card">
+                <div className="torrent-card__head">
+                  <div>
+                    <p className="torrent-card__label">Torrent entry</p>
+                    <strong>{entry.displayName}</strong>
+                  </div>
+                  <span className={`status-chip status-chip--${entry.localStatus}`}>{entry.localStatus}</span>
                 </div>
-                <span className={`status-chip status-chip--${entry.localStatus}`}>{entry.localStatus}</span>
-              </div>
-              <dl className="torrent-card__stats">
-                <div>
-                  <dt>Size</dt>
-                  <dd>{formatBytes(entry.fileSize)}</dd>
-                </div>
-                <div>
-                  <dt>Pieces</dt>
-                  <dd>{entry.pieceCount}</dd>
-                </div>
-                <div>
-                  <dt>Seeders</dt>
-                  <dd>{entry.seederCount}</dd>
-                </div>
-              </dl>
-              <button type="button" className="action-button action-button--dark" onClick={() => onStartDownload(entry.torrentId)}>
-                Download
-              </button>
-            </li>
-          ))}
+                <dl className="torrent-card__stats">
+                  <div>
+                    <dt>Size</dt>
+                    <dd>{formatBytes(entry.fileSize)}</dd>
+                  </div>
+                  <div>
+                    <dt>Pieces</dt>
+                    <dd>{entry.pieceCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Seeders</dt>
+                    <dd>{entry.seederCount}</dd>
+                  </div>
+                </dl>
+                {isLocal ? (
+                  <div className="torrent-card__actions">
+                    <a className="action-button action-button--dark" href={previewUrl} target="_blank" rel="noreferrer">
+                      Preview
+                    </a>
+                    <a className="action-button action-button--light" href={downloadUrl} download={entry.displayName}>
+                      Save to device
+                    </a>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="action-button action-button--dark"
+                      onClick={() => onStartDownload(entry.torrentId)}
+                    >
+                      {downloadLabel}
+                    </button>
+                    <p className="field-note">Preview unlocks after the swarm download finishes.</p>
+                  </>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

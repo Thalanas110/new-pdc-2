@@ -2,6 +2,7 @@
 
 #include "controllers/http_controller.hpp"
 #include "models/app_state.hpp"
+#include "services/file-vault/file_vault_service.hpp"
 #include "services/net-io/net_io.hpp"
 #include "services/swarm/catalog_service.hpp"
 #include "services/swarm/discovery_service.hpp"
@@ -158,7 +159,8 @@ void add_bootstrap_peers_from_list(DiscoveryService& discovery_service,
 void http_server(AppState& state,
                  CatalogService& catalog_service,
                  DiscoveryService& discovery_service,
-                 SwarmTransferService& swarm_transfer_service) {
+                 SwarmTransferService& swarm_transfer_service,
+                 FileVaultService& file_vault_service) {
   const socket_t listener = netio::create_listener(state.bind_host, state.http_port);
   if (listener == invalid_socket) {
     std::cerr << "Could not start HTTP server on " << state.bind_host << ':' << state.http_port << '\n';
@@ -169,8 +171,21 @@ void http_server(AppState& state,
   deps.status_json = [&state]() { return state.status_json(); };
   deps.library_json = [&catalog_service]() { return catalog_service.library_json(); };
   deps.downloads_json = [&swarm_transfer_service]() { return swarm_transfer_service.downloads_json(); };
+  deps.files_json = [&file_vault_service](const std::string& kind) { return file_vault_service.file_list_json(kind); };
   deps.publish_file = [&swarm_transfer_service](socket_t client, const std::string& file_name, const std::vector<char>& body) {
     swarm_transfer_service.publish_from_http(client, file_name, body);
+  };
+  deps.open_file = [&file_vault_service](socket_t client, const std::string& kind, const std::string& name) {
+    file_vault_service.send_file_inline(client, kind, name);
+  };
+  deps.download_file = [&file_vault_service](socket_t client, const std::string& kind, const std::string& name) {
+    file_vault_service.send_file_attachment(client, kind, name);
+  };
+  deps.open_library_file = [&swarm_transfer_service](socket_t client, const std::string& torrent_id) {
+    swarm_transfer_service.send_local_file_inline(client, torrent_id);
+  };
+  deps.download_library_file = [&swarm_transfer_service](socket_t client, const std::string& torrent_id) {
+    swarm_transfer_service.send_local_file_attachment(client, torrent_id);
   };
   deps.bootstrap_peer = [&discovery_service, &swarm_transfer_service](const transfer::PeerEndpoint& peer) {
     discovery_service.bootstrap_peer(peer);
@@ -234,6 +249,7 @@ int BackendApp::run(int argc, char* argv[]) {
   CatalogService catalog_service(state);
   DiscoveryService discovery_service(state, 8789);
   SwarmTransferService swarm_transfer_service(state, catalog_service, manifest_service, piece_store_service);
+  FileVaultService file_vault_service(state);
   add_bootstrap_peers_from_list(discovery_service, state, env_value("P2P_SYNC_PEERS", ""));
   discovery_service.set_peer_detected_callback([&swarm_transfer_service](const transfer::PeerEndpoint& peer) {
     (void)swarm_transfer_service.bootstrap_peer(peer);
@@ -247,7 +263,7 @@ int BackendApp::run(int argc, char* argv[]) {
   std::cout << "Received files: " << state.receive_dir.string() << '\n';
   std::cout << "Sent files: " << state.sent_dir.string() << '\n';
   std::cout << "Shared folder: " << state.shared_dir.string() << '\n';
-  http_server(state, catalog_service, discovery_service, swarm_transfer_service);
+  http_server(state, catalog_service, discovery_service, swarm_transfer_service, file_vault_service);
 
 #ifdef _WIN32
   WSACleanup();

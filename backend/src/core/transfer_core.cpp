@@ -72,6 +72,8 @@ std::string content_type_for_file(const std::string& file_name) {
   if (extension == "mp3") return "audio/mpeg";
   if (extension == "wav") return "audio/wav";
   if (extension == "ogg") return "audio/ogg";
+  if (extension == "doc") return "application/msword";
+  if (extension == "docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   return "application/octet-stream";
 }
 

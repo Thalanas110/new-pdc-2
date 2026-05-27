@@ -83,6 +83,7 @@ export type TransferFileEntry = {
   modifiedAt: string;
   contentType: string;
   url: string;
+  downloadUrl: string;
 };
 
 export function getFilePreviewKind(fileName: string, contentType: string): FilePreviewKind {

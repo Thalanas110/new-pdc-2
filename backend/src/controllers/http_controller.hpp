@@ -16,7 +16,12 @@ class HttpController {
     std::function<std::string()> status_json;
     std::function<std::string()> library_json;
     std::function<std::string()> downloads_json;
+    std::function<std::optional<std::string>(const std::string&)> files_json;
     std::function<void(socket_t, const std::string&, const std::vector<char>&)> publish_file;
+    std::function<void(socket_t, const std::string&, const std::string&)> open_file;
+    std::function<void(socket_t, const std::string&, const std::string&)> download_file;
+    std::function<void(socket_t, const std::string&)> open_library_file;
+    std::function<void(socket_t, const std::string&)> download_library_file;
     std::function<bool(const transfer::PeerEndpoint&)> bootstrap_peer;
     std::function<void(const std::string&)> start_download;
     std::function<int()> transfer_port;

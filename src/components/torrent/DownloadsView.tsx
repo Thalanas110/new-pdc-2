@@ -27,6 +27,9 @@ export function DownloadsView({ downloads }: DownloadsViewProps) {
         <ul className="download-stack">
           {downloads.map((entry) => {
             const progress = getTransferPercent(entry.verifiedPieces, entry.pieceCount);
+            const isComplete = entry.status === 'seeding' || entry.status === 'complete';
+            const previewUrl = `/api/library/open?torrentId=${encodeURIComponent(entry.torrentId)}`;
+            const downloadUrl = `/api/library/download?torrentId=${encodeURIComponent(entry.torrentId)}`;
 
             return (
               <li key={entry.torrentId} className="download-card">
@@ -73,6 +76,19 @@ export function DownloadsView({ downloads }: DownloadsViewProps) {
                   </ul>
                 ) : (
                   <p className="field-note">Waiting for peer assignments or fresh bitfield responses.</p>
+                )}
+
+                {isComplete ? (
+                  <div className="download-card__actions">
+                    <a className="action-button action-button--dark" href={previewUrl} target="_blank" rel="noreferrer">
+                      Preview
+                    </a>
+                    <a className="action-button action-button--light" href={downloadUrl} download={entry.displayName}>
+                      Save to device
+                    </a>
+                  </div>
+                ) : (
+                  <p className="field-note">Preview unlocks after download verification finishes.</p>
                 )}
               </li>
             );

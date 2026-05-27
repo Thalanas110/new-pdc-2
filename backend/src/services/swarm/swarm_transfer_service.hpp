@@ -24,6 +24,8 @@ class SwarmTransferService {
   void start_download(const TorrentManifest& manifest);
   void start_download_by_id(const std::string& torrent_id);
   void publish_from_http(socket_t client, const std::string& file_name, const std::vector<char>& body);
+  void send_local_file_inline(socket_t client, const std::string& torrent_id) const;
+  void send_local_file_attachment(socket_t client, const std::string& torrent_id) const;
   std::string downloads_json() const;
 
  private:
@@ -46,6 +48,9 @@ class SwarmTransferService {
   bool sync_receive_file(const TorrentManifest& manifest) const;
   void run_download(const TorrentManifest& manifest);
   void handle_swarm_client(socket_t client, const std::string& peer_host);
+  void send_local_file_with_disposition(socket_t client,
+                                        const std::string& torrent_id,
+                                        const std::string& disposition) const;
 
   AppState& state_;
   CatalogService& catalog_;
