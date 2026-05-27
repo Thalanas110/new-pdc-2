@@ -255,6 +255,7 @@ int BackendApp::run(int argc, char* argv[]) {
   });
   add_bootstrap_peers_from_list(discovery_service, state, env_value("P2P_SYNC_PEERS", ""));
   discovery_service.start();
+  std::thread([&swarm_transfer_service]() { swarm_transfer_service.background_sync_loop(); }).detach();
   std::thread([&swarm_transfer_service]() { swarm_transfer_service.transfer_listener(); }).detach();
 
   std::cout << "Loopline P2P receiver: " << state.advertised_host << ':' << state.transfer_port << '\n';

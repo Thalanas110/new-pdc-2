@@ -65,6 +65,7 @@ struct SwarmNode {
   CatalogService catalog;
   SwarmTransferService transfer;
   std::thread listener;
+  std::thread background_sync;
 
   explicit SwarmNode(const fs::path& root, int port)
       : piece_store(root / "torrents"),
@@ -84,6 +85,7 @@ struct SwarmNode {
 
   void start() {
     listener = std::thread([this]() { transfer.transfer_listener(); });
+    background_sync = std::thread([this]() { transfer.background_sync_loop(); });
     const bool ready = wait_for([this]() { return state.listener_active.load(); }, std::chrono::milliseconds(1500));
     assert(ready);
   }
@@ -96,6 +98,9 @@ struct SwarmNode {
     }
     if (listener.joinable()) {
       listener.join();
+    }
+    if (background_sync.joinable()) {
+      background_sync.join();
     }
   }
 };
@@ -136,6 +141,26 @@ int main() {
   const auto manifest = publisher.transfer.publish_file("demo.bin", payload);
   assert(manifest.has_value());
   assert(manifest->piece_count >= 3);
+
+  SwarmNode sync_only(root / "sync-only", 9415);
+  sync_only.start();
+  {
+    SwarmPeerRecord peer;
+    peer.node_id = "publisher";
+    peer.host = "127.0.0.1";
+    peer.port = 9411;
+    peer.source = "discovered";
+    peer.reachable = true;
+    sync_only.state.upsert_swarm_peer(peer);
+
+    const bool synced_catalog = wait_for(
+        [&]() {
+          const auto library = sync_only.state.library_snapshot();
+          return library.size() == 1 && library[0].display_name == "demo.bin";
+        },
+        std::chrono::seconds(7));
+    assert(synced_catalog);
+  }
 
   const bool leecher_catalog_ready =
       leecher.transfer.bootstrap_peer(transfer::PeerEndpoint{"127.0.0.1", 9411});
@@ -200,6 +225,16 @@ int main() {
       },
       std::chrono::seconds(4));
   assert(second_manifest_visible);
+  const bool sync_only_second_visible = wait_for(
+      [&]() {
+        const auto library = sync_only.state.library_snapshot();
+        return library.size() == 2 &&
+               std::any_of(library.begin(), library.end(), [&](const auto& entry) {
+                 return entry.torrent_id == second_manifest->torrent_id;
+               });
+      },
+      std::chrono::seconds(7));
+  assert(sync_only_second_visible);
   {
     const auto peers = fanout.state.swarm_peers_snapshot();
     assert(find_peer_by_endpoint(peers, "127.0.0.1", 9411) != nullptr);
@@ -220,6 +255,7 @@ int main() {
   assert(second_download_complete);
   assert(read_bytes(fanout.state.receive_dir / "demo-2.bin") == second_payload);
 
+  sync_only.stop();
   fanout.stop();
   leecher.stop();
   publisher.stop();

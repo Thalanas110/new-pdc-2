@@ -21,6 +21,7 @@ class SwarmTransferService {
                        ManifestService& manifest_service,
                        PieceStoreService& piece_store);
 
+  void background_sync_loop();
   void transfer_listener();
   bool bootstrap_peer(const transfer::PeerEndpoint& peer);
   std::optional<TorrentManifest> publish_file(const std::string& file_name, const std::vector<char>& body);

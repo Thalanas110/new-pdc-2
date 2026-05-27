@@ -26,6 +26,7 @@ namespace {
 constexpr std::size_t kSocketChunkSize = 64 * 1024;
 constexpr std::size_t kMaxInFlightPerPeer = 2;
 constexpr auto kPeerProbeCooldown = std::chrono::seconds(8);
+constexpr auto kCatalogSyncInterval = std::chrono::seconds(5);
 
 std::string sanitize_field(std::string value) {
   for (char& ch : value) {
@@ -82,17 +83,13 @@ void append_manifest_lines(std::ostringstream& out, const TorrentManifest& manif
   out << "END\n";
 }
 
-std::optional<TorrentManifest> read_manifest_block(socket_t client, std::optional<std::string> first_line = std::nullopt) {
+std::optional<TorrentManifest> read_manifest_block(socket_t client) {
   TorrentManifest manifest;
   std::size_t expected_hashes = 0;
-  std::optional<std::string> pending_line = std::move(first_line);
 
   while (true) {
     std::string line;
-    if (pending_line.has_value()) {
-      line = std::move(*pending_line);
-      pending_line.reset();
-    } else if (!netio::read_line(client, line)) {
+    if (!netio::read_line(client, line)) {
       return std::nullopt;
     }
 
@@ -279,6 +276,25 @@ void SwarmTransferService::schedule_peer_probe(const transfer::PeerEndpoint& pee
   }
 
   std::thread([this, peer]() { (void)bootstrap_peer(peer); }).detach();
+}
+
+void SwarmTransferService::background_sync_loop() {
+  while (state_.running.load()) {
+    const auto peers = state_.swarm_peers_snapshot();
+    for (const auto& peer_record : peers) {
+      if (!state_.running.load()) {
+        return;
+      }
+
+      const transfer::PeerEndpoint peer{peer_record.host, peer_record.port};
+      if (same_endpoint(peer, local_endpoint())) {
+        continue;
+      }
+      (void)bootstrap_peer(peer);
+    }
+
+    std::this_thread::sleep_for(kCatalogSyncInterval);
+  }
 }
 
 void SwarmTransferService::transfer_listener() {
@@ -549,7 +565,6 @@ bool SwarmTransferService::announce_manifest_to_peer(const transfer::PeerEndpoin
   request << "SWARM/1\nMANIFEST_PUSH\n";
   request << "HOST " << sanitize_field(state_.advertised_host) << '\n';
   request << "PORT " << state_.transfer_port << '\n';
-  request << "NODE " << sanitize_field(state_.node_id) << '\n';
   append_manifest_lines(request, manifest);
 
   if (!netio::send_text(connected, request.str())) {
@@ -889,20 +904,7 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
       return;
     }
 
-    std::string next_line;
-    if (!netio::read_line(client, next_line)) {
-      close_socket(client);
-      return;
-    }
-
-    std::string relay_node_id;
-    std::optional<std::string> manifest_first_line = next_line;
-    if (next_line.rfind("NODE ", 0) == 0) {
-      relay_node_id = next_line.substr(5);
-      manifest_first_line.reset();
-    }
-
-    const auto manifest = read_manifest_block(client, manifest_first_line);
+    const auto manifest = read_manifest_block(client);
     const auto parsed_port = parse_int(port_line);
     const auto source_peer =
         parsed_port ? transfer::parse_peer_endpoint(host + ":" + std::to_string(*parsed_port), *parsed_port)
@@ -911,7 +913,7 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
       const bool first_seen = !catalog_.find_manifest(manifest->torrent_id).has_value();
       catalog_.note_remote_manifest(*manifest, *source_peer);
       SwarmPeerRecord record;
-      record.node_id = relay_node_id.empty() ? ("relay-" + peer_key(*source_peer)) : relay_node_id;
+      record.node_id = "relay-" + peer_key(*source_peer);
       record.host = source_peer->host;
       record.port = source_peer->port;
       record.source = "discovered";
