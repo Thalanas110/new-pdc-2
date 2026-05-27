@@ -273,9 +273,6 @@ export function HomeView() {
         <button type="button" aria-pressed={activeView === 'downloads'} onClick={() => setActiveView('downloads')}>
           Downloads
         </button>
-        <button type="button" aria-pressed={activeView === 'files'} onClick={() => setActiveView('files')}>
-          Files
-        </button>
       </nav>
 
       <section className="control-deck">
