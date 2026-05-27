@@ -64,6 +64,64 @@ int arg_value(int argc, char* argv[], const std::string& name, int fallback) {
   return fallback;
 }
 
+std::optional<std::string> detect_private_lan_host() {
+  const socket_t probe = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (probe != invalid_socket) {
+    sockaddr_in remote{};
+    remote.sin_family = AF_INET;
+    remote.sin_port = htons(53);
+    inet_pton(AF_INET, "8.8.8.8", &remote.sin_addr);
+    if (connect(probe, reinterpret_cast<const sockaddr*>(&remote), sizeof(remote)) == 0) {
+      sockaddr_in local{};
+      socket_length_t local_size = sizeof(local);
+      if (getsockname(probe, reinterpret_cast<sockaddr*>(&local), &local_size) == 0) {
+        char buffer[INET_ADDRSTRLEN] = {};
+        if (inet_ntop(AF_INET, &local.sin_addr, buffer, sizeof(buffer)) != nullptr) {
+          const std::string detected = buffer;
+          if (transfer::is_private_lan_host(detected)) {
+            close_socket(probe);
+            return detected;
+          }
+        }
+      }
+    }
+    close_socket(probe);
+  }
+
+  char hostname[256] = {};
+  if (gethostname(hostname, sizeof(hostname)) != 0) {
+    return std::nullopt;
+  }
+
+  addrinfo hints{};
+  hints.ai_family = AF_INET;
+  hints.ai_socktype = SOCK_DGRAM;
+  addrinfo* results = nullptr;
+  if (getaddrinfo(hostname, nullptr, &hints, &results) != 0) {
+    return std::nullopt;
+  }
+
+  std::optional<std::string> detected;
+  for (addrinfo* candidate = results; candidate != nullptr; candidate = candidate->ai_next) {
+    if (candidate->ai_addr == nullptr) {
+      continue;
+    }
+    const auto* address = reinterpret_cast<const sockaddr_in*>(candidate->ai_addr);
+    char buffer[INET_ADDRSTRLEN] = {};
+    if (inet_ntop(AF_INET, &address->sin_addr, buffer, sizeof(buffer)) == nullptr) {
+      continue;
+    }
+    const std::string host = buffer;
+    if (transfer::is_private_lan_host(host)) {
+      detected = host;
+      break;
+    }
+  }
+
+  freeaddrinfo(results);
+  return detected;
+}
+
 std::string arg_string(int argc, char* argv[], const std::string& name, const std::string& fallback) {
   for (int index = 1; index + 1 < argc; ++index) {
     if (name == argv[index]) {
@@ -155,11 +213,15 @@ int BackendApp::run(int argc, char* argv[]) {
   state.transfer_port =
       arg_value(argc, argv, "--transfer", parse_int(env_value("P2P_TRANSFER_PORT", "8788")).value_or(8788));
   state.bind_host = arg_string(argc, argv, "--bind", env_value("P2P_BIND_HOST", "0.0.0.0"));
-  state.advertised_host = arg_string(argc, argv, "--advertise", env_value("P2P_ADVERTISED_HOST", state.bind_host));
-  if (state.advertised_host == "0.0.0.0") {
+  state.allow_remote_peers = env_flag("P2P_ALLOW_REMOTE", true);
+  const std::string configured_advertise = arg_string(argc, argv, "--advertise", env_value("P2P_ADVERTISED_HOST", ""));
+  if (!configured_advertise.empty()) {
+    state.advertised_host = configured_advertise;
+  } else if (state.allow_remote_peers) {
+    state.advertised_host = detect_private_lan_host().value_or("127.0.0.1");
+  } else {
     state.advertised_host = "127.0.0.1";
   }
-  state.allow_remote_peers = env_flag("P2P_ALLOW_REMOTE", true);
   state.receive_dir = env_value("P2P_RECEIVE_DIR", (std::filesystem::current_path() / "backend" / "received").string());
   state.sent_dir = env_value("P2P_SENT_DIR", (std::filesystem::current_path() / "backend" / "sent").string());
   state.shared_dir = env_value("P2P_SHARED_DIR", (std::filesystem::current_path() / "shared").string());
@@ -173,6 +235,10 @@ int BackendApp::run(int argc, char* argv[]) {
   DiscoveryService discovery_service(state, 8789);
   SwarmTransferService swarm_transfer_service(state, catalog_service, manifest_service, piece_store_service);
   add_bootstrap_peers_from_list(discovery_service, state, env_value("P2P_SYNC_PEERS", ""));
+  discovery_service.set_peer_detected_callback([&swarm_transfer_service](const transfer::PeerEndpoint& peer) {
+    (void)swarm_transfer_service.bootstrap_peer(peer);
+  });
+  discovery_service.start();
   std::thread([&swarm_transfer_service]() { swarm_transfer_service.transfer_listener(); }).detach();
 
   std::cout << "Loopline P2P receiver: " << state.advertised_host << ':' << state.transfer_port << '\n';

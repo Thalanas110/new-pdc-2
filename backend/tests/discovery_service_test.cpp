@@ -62,6 +62,27 @@ int main() {
 
   {
     AppState state;
+    DiscoveryService discovery(state, 8789);
+
+    int callback_count = 0;
+    std::vector<std::string> detected_keys;
+    discovery.set_peer_detected_callback([&](const transfer::PeerEndpoint& peer) {
+      ++callback_count;
+      detected_keys.push_back(peer.host + ":" + std::to_string(peer.port));
+    });
+
+    discovery.bootstrap_peer({"192.168.43.14", 8788});
+    discovery.bootstrap_peer({"192.168.43.14", 8788});
+    discovery.bootstrap_peer({"192.168.43.14", 8789});
+
+    assert(callback_count == 2);
+    assert(detected_keys.size() == 2);
+    assert(detected_keys[0] == "192.168.43.14:8788");
+    assert(detected_keys[1] == "192.168.43.14:8789");
+  }
+
+  {
+    AppState state;
 
     SwarmPeerRecord peer;
     peer.node_id = "node-c";
