@@ -890,6 +890,7 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
         parsed_port ? transfer::parse_peer_endpoint(host + ":" + std::to_string(*parsed_port), *parsed_port)
                     : std::nullopt;
     if (manifest && source_peer) {
+      const bool first_seen = !catalog_.find_manifest(manifest->torrent_id).has_value();
       catalog_.note_remote_manifest(*manifest, *source_peer);
       SwarmPeerRecord record;
       record.node_id = manifest->publisher_node_id;
@@ -898,6 +899,9 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
       record.source = "discovered";
       record.reachable = true;
       state_.upsert_swarm_peer(record);
+      if (first_seen) {
+        announce_manifest_to_known_peers(*manifest, peer_key(*source_peer));
+      }
       (void)netio::send_text(client, "SWARM/1\nOK\n\n");
     }
     close_socket(client);

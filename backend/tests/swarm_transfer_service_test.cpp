@@ -187,6 +187,34 @@ int main() {
   assert(final_sessions[0].verified_pieces == manifest->piece_count);
   assert(read_bytes(fanout.state.receive_dir / "demo.bin") == payload);
 
+  const auto second_payload = make_payload(310000);
+  const auto second_manifest = publisher.transfer.publish_file("demo-2.bin", second_payload);
+  assert(second_manifest.has_value());
+  const bool second_manifest_visible = wait_for(
+      [&]() {
+        const auto library = fanout.state.library_snapshot();
+        return library.size() == 2 &&
+               std::any_of(library.begin(), library.end(), [&](const auto& entry) {
+                 return entry.torrent_id == second_manifest->torrent_id;
+               });
+      },
+      std::chrono::seconds(4));
+  assert(second_manifest_visible);
+
+  fanout.transfer.start_download_by_id(second_manifest->torrent_id);
+  const bool second_download_complete = wait_for(
+      [&]() {
+        const auto sessions = fanout.state.download_sessions_snapshot();
+        return sessions.size() == 2 &&
+               std::any_of(sessions.begin(), sessions.end(), [&](const auto& session) {
+                 return session.torrent_id == second_manifest->torrent_id &&
+                        (session.status == "complete" || session.status == "seeding");
+               });
+      },
+      std::chrono::seconds(6));
+  assert(second_download_complete);
+  assert(read_bytes(fanout.state.receive_dir / "demo-2.bin") == second_payload);
+
   fanout.stop();
   leecher.stop();
   publisher.stop();
