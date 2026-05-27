@@ -200,6 +200,11 @@ int main() {
       },
       std::chrono::seconds(4));
   assert(second_manifest_visible);
+  {
+    const auto peers = fanout.state.swarm_peers_snapshot();
+    assert(find_peer_by_endpoint(peers, "127.0.0.1", 9411) != nullptr);
+    assert(find_peer_by_endpoint(peers, "127.0.0.1", 9412) != nullptr);
+  }
 
   fanout.transfer.start_download_by_id(second_manifest->torrent_id);
   const bool second_download_complete = wait_for(
