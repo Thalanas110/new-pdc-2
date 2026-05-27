@@ -12,6 +12,7 @@ describe('torrent swarm home', () => {
     expect(screen.getByRole('button', { name: 'Library' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Downloads' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Publish' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'How to operate the swarm.' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Library' }));
     expect(screen.getByRole('heading', { name: 'Library' })).toBeInTheDocument();

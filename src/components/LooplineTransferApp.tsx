@@ -11,9 +11,11 @@ import {
   type BackendStatus,
   type TorrentDownloadEntry,
   type TorrentLibraryEntry,
+  formatBytes,
   isAllowedPeerAddress,
 } from '../lib/transferModel';
 import { DownloadsView } from './torrent/DownloadsView';
+import { GuidePanel } from './torrent/GuidePanel';
 import { LibraryView } from './torrent/LibraryView';
 import { PublishView } from './torrent/PublishView';
 import { SwarmView } from './torrent/SwarmView';
@@ -147,6 +149,11 @@ export function HomeView() {
     />
   );
 
+  const liveSeeders = library.filter((entry) => entry.localStatus === 'seeding' || entry.localStatus === 'complete').length;
+  const totalPayload = library.reduce((sum, entry) => sum + entry.fileSize, 0);
+  const downloadPressure = downloads.filter((entry) => entry.status === 'downloading' || entry.status === 'discovering').length;
+  const guideTone = status.listenerActive ? 'good' : 'bad';
+
   if (activeView === 'swarm') {
     currentView = (
       <SwarmView
@@ -166,9 +173,50 @@ export function HomeView() {
 
   return (
     <main className="loop-shell">
+      <div className="loop-gridlines" aria-hidden="true" />
+      <div className="loop-noise" aria-hidden="true" />
       <header className="loop-header">
-        <p className="loop-kicker">Loopline Torrent Swarm</p>
-        <p aria-label="Swarm status">{notice}</p>
+        <div className="loop-header__copy">
+          <p className="loop-kicker">Loopline // Swarm Console</p>
+          <h1 className="loop-title">Hotspot-ready torrent distribution for your class demo.</h1>
+          <p className="loop-lede">
+            Immutable file publishing, verified chunk exchange, bootstrap fallback, and automatic reseeding after
+            completion.
+          </p>
+        </div>
+
+        <div className="loop-header__telemetry">
+          <div className={`signal-banner ${guideTone}`}>
+            <span className="signal-banner__label">Swarm status</span>
+            <strong aria-label="Swarm status">{notice}</strong>
+            <span className="signal-banner__meta">
+              {status.listenerActive ? 'Transfer listener armed' : 'Listener offline'} / port {status.transferPort}
+            </span>
+          </div>
+
+          <div className="telemetry-grid">
+            <article className="telemetry-card">
+              <span>Known peers</span>
+              <strong>{status.peers.length}</strong>
+              <small>Bootstrap once, then let the swarm spread peer intel.</small>
+            </article>
+            <article className="telemetry-card">
+              <span>Published files</span>
+              <strong>{library.length}</strong>
+              <small>{formatBytes(totalPayload)} currently exposed to the library.</small>
+            </article>
+            <article className="telemetry-card">
+              <span>Local seeders</span>
+              <strong>{liveSeeders}</strong>
+              <small>Completed downloads turn into seeders automatically.</small>
+            </article>
+            <article className="telemetry-card">
+              <span>Active pulls</span>
+              <strong>{downloadPressure}</strong>
+              <small>Parallel piece requests update in the downloads rail.</small>
+            </article>
+          </div>
+        </div>
       </header>
 
       <nav className="mode-tabs" aria-label="Torrent pages">
@@ -186,7 +234,27 @@ export function HomeView() {
         </button>
       </nav>
 
-      {currentView}
+      <section className="control-deck">
+        <div className="control-stage">{currentView}</div>
+
+        <aside className="control-rail">
+          <GuidePanel transferPort={status.transferPort} />
+
+          <section className="rail-card rail-card--dark" aria-labelledby="ops-heading">
+            <div className="rail-card__eyebrow">Operator Readout</div>
+            <h2 id="ops-heading">What the class should watch for.</h2>
+            <ul className="ops-list">
+              <li>Every publish creates a new immutable torrent entry. Editing a file means republishing it.</li>
+              <li>The `Library` shows what the swarm knows. The `Downloads` view shows verified piece progress.</li>
+              <li>
+                If your phone hotspot hides peers, use the `Swarm` tab and type one seeder&apos;s host plus port{' '}
+                {status.transferPort}.
+              </li>
+              <li>After one downloader finishes, start another download and show that the seeder count increases.</li>
+            </ul>
+          </section>
+        </aside>
+      </section>
     </main>
   );
 }
