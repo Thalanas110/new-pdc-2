@@ -288,7 +288,7 @@ void DiscoveryService::note_peer_hello(const std::string& node_id,
   peer.host = host;
   peer.port = port;
   peer.source = source;
-  peer.reachable = true;
+  peer.reachable = false;
   state_.upsert_swarm_peer(peer);
 }
 

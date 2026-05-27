@@ -385,7 +385,7 @@ bool SwarmTransferService::fetch_peers_from_peer(const transfer::PeerEndpoint& p
     record.host = discovered->host;
     record.port = discovered->port;
     record.source = "discovered";
-    record.reachable = true;
+    record.reachable = false;
     state_.upsert_swarm_peer(record);
   }
 
@@ -401,13 +401,15 @@ bool SwarmTransferService::bootstrap_peer(const transfer::PeerEndpoint& peer) {
   record.host = peer.host;
   record.port = peer.port;
   record.source = "bootstrap";
-  record.reachable = true;
+  record.reachable = false;
   state_.upsert_swarm_peer(record);
 
   bool any_ok = false;
   any_ok = send_hello_to_peer(peer) || any_ok;
   any_ok = fetch_peers_from_peer(peer) || any_ok;
   any_ok = fetch_catalog_from_peer(peer) || any_ok;
+  record.reachable = any_ok;
+  state_.upsert_swarm_peer(record);
   return any_ok;
 }
 

@@ -31,8 +31,12 @@ void HttpController::handle_client(socket_t client) const {
     const auto peer = transfer::parse_peer_endpoint(host + ":" + std::to_string(port), deps_.transfer_port());
     if (!peer || !deps_.is_allowed_peer(peer->host)) {
       view_.send_json(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"Use localhost or a private LAN peer\"}");
+    } else if (!deps_.bootstrap_peer(*peer)) {
+      view_.send_json(client,
+                      502,
+                      "Bad Gateway",
+                      "{\"ok\":false,\"error\":\"Could not complete swarm handshake with that peer\"}");
     } else {
-      deps_.bootstrap_peer(*peer);
       view_.send_json(client, 200, "OK", deps_.status_json());
     }
   } else if (request.method == "POST" && route == "/api/publish") {

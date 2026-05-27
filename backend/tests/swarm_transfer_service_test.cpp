@@ -49,6 +49,15 @@ bool wait_for(const std::function<bool()>& predicate, std::chrono::milliseconds 
   return predicate();
 }
 
+const SwarmPeerRecord* find_peer_by_endpoint(const std::vector<SwarmPeerRecord>& peers,
+                                             const std::string& host,
+                                             int port) {
+  const auto found = std::find_if(peers.begin(), peers.end(), [&](const auto& peer) {
+    return peer.host == host && peer.port == port;
+  });
+  return found == peers.end() ? nullptr : &(*found);
+}
+
 struct SwarmNode {
   AppState state;
   ManifestService manifest_service;
@@ -112,6 +121,17 @@ int main() {
   leecher.start();
   fanout.start();
 
+  {
+    SwarmNode offline(root / "offline", 9414);
+    const bool offline_bootstrap = offline.transfer.bootstrap_peer(transfer::PeerEndpoint{"127.0.0.1", 9599});
+    assert(!offline_bootstrap);
+    const auto peers = offline.state.swarm_peers_snapshot();
+    assert(peers.size() == 1);
+    assert(peers[0].host == "127.0.0.1");
+    assert(peers[0].port == 9599);
+    assert(!peers[0].reachable);
+  }
+
   const auto payload = make_payload(700000);
   const auto manifest = publisher.transfer.publish_file("demo.bin", payload);
   assert(manifest.has_value());
@@ -120,6 +140,9 @@ int main() {
   const bool leecher_catalog_ready =
       leecher.transfer.bootstrap_peer(transfer::PeerEndpoint{"127.0.0.1", 9411});
   assert(leecher_catalog_ready);
+  const auto* leecher_peer = find_peer_by_endpoint(leecher.state.swarm_peers_snapshot(), "127.0.0.1", 9411);
+  assert(leecher_peer != nullptr);
+  assert(leecher_peer->reachable);
   assert(wait_for([&]() { return leecher.state.library_snapshot().size() == 1; }, std::chrono::milliseconds(1500)));
 
   leecher.transfer.start_download_by_id(manifest->torrent_id);

@@ -17,7 +17,7 @@ class HttpController {
     std::function<std::string()> library_json;
     std::function<std::string()> downloads_json;
     std::function<void(socket_t, const std::string&, const std::vector<char>&)> publish_file;
-    std::function<void(const transfer::PeerEndpoint&)> bootstrap_peer;
+    std::function<bool(const transfer::PeerEndpoint&)> bootstrap_peer;
     std::function<void(const std::string&)> start_download;
     std::function<int()> transfer_port;
     std::function<bool(const std::string&)> is_allowed_peer;

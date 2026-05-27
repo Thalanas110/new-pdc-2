@@ -70,6 +70,17 @@ describe('backend client swarm calls', () => {
     });
   });
 
+  it('surfaces swarm bootstrap handshake failures', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response('{"ok":false,"error":"Could not complete swarm handshake with that peer"}', { status: 502 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(bootstrapPeer({ host: '192.168.43.10', port: 8788 })).rejects.toThrow(
+      'Could not complete swarm handshake with that peer',
+    );
+  });
+
   it('fetches the torrent library from the library endpoint', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response('{"library":[]}', {

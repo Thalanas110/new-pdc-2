@@ -57,7 +57,7 @@ int main() {
     assert(peer != nullptr);
     assert(peer->node_id == "node-b");
     assert(peer->source == "discovered");
-    assert(peer->reachable);
+    assert(!peer->reachable);
   }
 
   {

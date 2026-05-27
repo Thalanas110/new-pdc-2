@@ -174,7 +174,7 @@ void http_server(AppState& state,
   };
   deps.bootstrap_peer = [&discovery_service, &swarm_transfer_service](const transfer::PeerEndpoint& peer) {
     discovery_service.bootstrap_peer(peer);
-    (void)swarm_transfer_service.bootstrap_peer(peer);
+    return swarm_transfer_service.bootstrap_peer(peer);
   };
   deps.start_download = [&swarm_transfer_service](const std::string& torrent_id) {
     swarm_transfer_service.start_download_by_id(torrent_id);
