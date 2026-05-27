@@ -43,13 +43,20 @@ int main() {
   {
     PieceStoreService store(root);
     assert(store.store_piece(manifest, 0, piece0) == true);
+    assert(store.store_piece(manifest, 1, piece1) == true);
     assert(store.has_piece(manifest, 0) == true);
-    assert(store.has_piece(manifest, 1) == false);
+    assert(store.has_piece(manifest, 1) == true);
     assert(store.has_piece(manifest, 2) == false);
 
     const auto missing = store.missing_pieces(manifest);
-    assert(missing.size() == 1);
-    assert(missing[0] == 1);
+    assert(missing.empty());
+
+    const auto assembled = store.assemble_file(manifest);
+    assert(assembled.has_value());
+    assert(fs::exists(*assembled));
+    std::ifstream assembled_input(*assembled, std::ios::binary);
+    std::string assembled_text((std::istreambuf_iterator<char>(assembled_input)), std::istreambuf_iterator<char>());
+    assert(assembled_text == "ABCDEFGH");
 
     const auto stored_root = root / "pieces";
     std::size_t stored_files = 0;
@@ -57,22 +64,25 @@ int main() {
     for (const auto& entry : fs::recursive_directory_iterator(stored_root)) {
       if (entry.is_regular_file()) {
         ++stored_files;
-        stored_piece_path = entry.path();
-        assert(entry.path().filename() == "piece-000000.bin");
+        if (entry.path().filename() == "piece-000000.bin") {
+          stored_piece_path = entry.path();
+        }
+        assert(entry.path().filename() == "piece-000000.bin" || entry.path().filename() == "piece-000001.bin");
         assert(entry.path().string().find("..") == std::string::npos);
       }
     }
-    assert(stored_files == 1);
+    assert(stored_files == 2);
+    assert(!stored_piece_path.empty());
 
     {
       std::ofstream corrupt_file(stored_piece_path, std::ios::binary | std::ios::trunc);
       corrupt_file.write("ZZ", 2);
     }
     assert(store.has_piece(manifest, 0) == false);
+    assert(!store.assemble_file(manifest).has_value());
     const auto missing_after_corrupt = store.missing_pieces(manifest);
-    assert(missing_after_corrupt.size() == 2);
+    assert(missing_after_corrupt.size() == 1);
     assert(missing_after_corrupt[0] == 0);
-    assert(missing_after_corrupt[1] == 1);
   }
 
   TorrentManifest malicious_manifest = manifest;

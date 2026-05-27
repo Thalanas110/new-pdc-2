@@ -61,7 +61,7 @@ export function HomeView() {
         setStatus(nextStatus);
         setPeerPort((currentPort) => (currentPort === 8788 ? nextStatus.transferPort : currentPort));
         setLibrary(nextLibrary);
-        setDownloads((currentDownloads) => (nextStatus.downloads.length > 0 ? nextStatus.downloads : currentDownloads));
+        setDownloads(nextStatus.downloads);
       } catch {
         if (!cancelled) {
           setNotice('Backend offline');
@@ -127,26 +127,9 @@ export function HomeView() {
   const onStartDownload = async (torrentId: string) => {
     try {
       await requestDownload(torrentId);
-      const torrent = library.find((entry) => entry.torrentId === torrentId);
-      if (torrent) {
-        setDownloads((currentDownloads) => {
-          if (currentDownloads.some((entry) => entry.torrentId === torrentId)) {
-            return currentDownloads;
-          }
-          return [
-            ...currentDownloads,
-            {
-              torrentId: torrent.torrentId,
-              displayName: torrent.displayName,
-              status: 'discovering',
-              fileSize: torrent.fileSize,
-              verifiedPieces: 0,
-              pieceCount: torrent.pieceCount,
-              activePeers: [],
-            },
-          ];
-        });
-      }
+      const nextStatus = await fetchStatus();
+      setStatus(nextStatus);
+      setDownloads(nextStatus.downloads);
       setActiveView('downloads');
       setNotice(`Started ${torrentId}`);
     } catch (error) {

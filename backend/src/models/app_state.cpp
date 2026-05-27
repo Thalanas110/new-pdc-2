@@ -101,6 +101,30 @@ std::string AppState::status_json() const {
   out << "\"sentDir\":\"" << transfer::json_escape(sent_dir.string()) << "\",";
   out << "\"sharedDir\":\"" << transfer::json_escape(shared_dir.string()) << "\",";
   out << "\"listenerActive\":" << (listener_active.load() ? "true" : "false") << ',';
+  out << "\"peers\":[";
+  for (std::size_t index = 0; index < swarm_peers_.size(); ++index) {
+    if (index > 0) {
+      out << ',';
+    }
+    out << make_json_swarm_peer(swarm_peers_[index]);
+  }
+  out << "],";
+  out << "\"library\":[";
+  for (std::size_t index = 0; index < library_.size(); ++index) {
+    if (index > 0) {
+      out << ',';
+    }
+    out << make_json_library_entry(library_[index]);
+  }
+  out << "],";
+  out << "\"downloads\":[";
+  for (std::size_t index = 0; index < download_sessions_.size(); ++index) {
+    if (index > 0) {
+      out << ',';
+    }
+    out << make_json_download_session(download_sessions_[index]);
+  }
+  out << "],";
   out << "\"syncPeers\":[";
   for (std::size_t index = 0; index < sync_peers_.size(); ++index) {
     if (index > 0) {

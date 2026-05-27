@@ -1,7 +1,10 @@
 #include "services/swarm/piece_store_service.hpp"
 
+#include "core/transfer_core.hpp"
+
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <ios>
@@ -105,6 +108,11 @@ std::filesystem::path PieceStoreService::piece_path(const TorrentManifest& manif
   return piece_dir(manifest) / name.str();
 }
 
+std::filesystem::path PieceStoreService::assembled_file_path(const TorrentManifest& manifest) const {
+  const std::string safe_name = transfer::safe_file_name(manifest.display_name);
+  return root_ / "files" / (safe_manifest_component(manifest.torrent_id).string() + "-" + safe_name);
+}
+
 bool PieceStoreService::store_piece(const TorrentManifest& manifest,
                                     std::uint64_t piece_index,
                                     const std::vector<char>& bytes) {
@@ -191,6 +199,19 @@ bool PieceStoreService::has_piece(const TorrentManifest& manifest, std::uint64_t
   return piece_hash_matches(manifest, piece_index, bytes);
 }
 
+std::optional<std::vector<char>> PieceStoreService::load_piece(const TorrentManifest& manifest,
+                                                               std::uint64_t piece_index) const {
+  if (!has_piece(manifest, piece_index)) {
+    return std::nullopt;
+  }
+
+  std::vector<char> bytes;
+  if (!read_file_bytes(piece_path(manifest, piece_index), bytes)) {
+    return std::nullopt;
+  }
+  return bytes;
+}
+
 std::vector<std::uint64_t> PieceStoreService::missing_pieces(const TorrentManifest& manifest) const {
   std::vector<std::uint64_t> missing;
   for (std::uint64_t index = 0; index < manifest.piece_count; ++index) {
@@ -201,7 +222,68 @@ std::vector<std::uint64_t> PieceStoreService::missing_pieces(const TorrentManife
   return missing;
 }
 
-std::optional<std::filesystem::path> PieceStoreService::assemble_file(const TorrentManifest&) {
-  // File assembly is intentionally left to the higher-level download/session workflow.
-  return std::nullopt;
+std::optional<std::filesystem::path> PieceStoreService::assemble_file(const TorrentManifest& manifest) {
+  if (!missing_pieces(manifest).empty()) {
+    return std::nullopt;
+  }
+
+  std::error_code directory_error;
+  const auto final_path = assembled_file_path(manifest);
+  std::filesystem::create_directories(final_path.parent_path(), directory_error);
+  if (directory_error) {
+    return std::nullopt;
+  }
+
+  const auto temp_path = final_path.string() + ".tmp";
+  {
+    std::ofstream output(temp_path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+      return std::nullopt;
+    }
+
+    for (std::uint64_t index = 0; index < manifest.piece_count; ++index) {
+      const auto piece = load_piece(manifest, index);
+      if (!piece) {
+        std::error_code cleanup_error;
+        std::filesystem::remove(temp_path, cleanup_error);
+        return std::nullopt;
+      }
+
+      if (!piece->empty()) {
+        output.write(piece->data(), static_cast<std::streamsize>(piece->size()));
+      }
+
+      if (!output) {
+        std::error_code cleanup_error;
+        std::filesystem::remove(temp_path, cleanup_error);
+        return std::nullopt;
+      }
+    }
+  }
+
+  std::error_code size_error;
+  const auto assembled_size = std::filesystem::file_size(temp_path, size_error);
+  if (size_error || assembled_size != manifest.file_size) {
+    std::error_code cleanup_error;
+    std::filesystem::remove(temp_path, cleanup_error);
+    return std::nullopt;
+  }
+
+  std::error_code remove_error;
+  std::filesystem::remove(final_path, remove_error);
+  if (remove_error) {
+    std::error_code cleanup_error;
+    std::filesystem::remove(temp_path, cleanup_error);
+    return std::nullopt;
+  }
+
+  std::error_code rename_error;
+  std::filesystem::rename(temp_path, final_path, rename_error);
+  if (rename_error) {
+    std::error_code cleanup_error;
+    std::filesystem::remove(temp_path, cleanup_error);
+    return std::nullopt;
+  }
+
+  return final_path;
 }

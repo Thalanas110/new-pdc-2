@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { bootstrapPeer, fetchLibrary, publishFile, startDownload } from './backendClient';
+import { bootstrapPeer, fetchLibrary, fetchStatus, publishFile, startDownload } from './backendClient';
 
 type HeaderMap = Record<string, string>;
 
@@ -82,6 +82,46 @@ describe('backend client swarm calls', () => {
     await fetchLibrary();
 
     expect(fetchMock).toHaveBeenCalledWith('/api/library');
+  });
+
+  it('reads swarm peers and downloads from the status endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          nodeId: 'node-a',
+          host: '127.0.0.1',
+          httpPort: 8787,
+          transferPort: 8788,
+          peers: [{ nodeId: 'node-b', host: '127.0.0.1', port: 8789, source: 'bootstrap', lastSeenAt: '', reachable: true }],
+          downloads: [
+            {
+              torrentId: 'torrent-a',
+              displayName: 'demo.bin',
+              status: 'downloading',
+              fileSize: 700000,
+              verifiedPieces: 2,
+              pieceCount: 3,
+              activePeers: ['127.0.0.1:8788', '127.0.0.1:8789'],
+            },
+          ],
+          transfers: [],
+          receiveDir: 'backend/received',
+          listenerActive: true,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const status = await fetchStatus();
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/status', { signal: undefined });
+    expect(status.peers).toHaveLength(1);
+    expect(status.downloads[0]?.activePeers).toHaveLength(2);
+    expect(status.listenerActive).toBe(true);
   });
 
   it('starts a download through the swarm downloads endpoint', async () => {

@@ -7,8 +7,8 @@ describe('docker packaging', () => {
     expect(dockerfileText).toContain('CMD ["/bin/sh", "/usr/local/bin/loopline-entrypoint"]');
   });
 
-  it('mounts the shared folder into the runtime container', () => {
+  it('mounts the shared folder and torrent store into the runtime container', () => {
     expect(dockerfileText).toContain('P2P_SHARED_DIR=/data/shared');
-    expect(dockerfileText).toContain('VOLUME ["/data/received", "/data/sent", "/data/shared"]');
+    expect(dockerfileText).toContain('VOLUME ["/data/received", "/data/sent", "/data/shared", "/data/torrents"]');
   });
 });

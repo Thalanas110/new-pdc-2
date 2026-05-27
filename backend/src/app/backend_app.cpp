@@ -114,7 +114,10 @@ void http_server(AppState& state,
   deps.publish_file = [&swarm_transfer_service](socket_t client, const std::string& file_name, const std::vector<char>& body) {
     swarm_transfer_service.publish_from_http(client, file_name, body);
   };
-  deps.bootstrap_peer = [&discovery_service](const transfer::PeerEndpoint& peer) { discovery_service.bootstrap_peer(peer); };
+  deps.bootstrap_peer = [&discovery_service, &swarm_transfer_service](const transfer::PeerEndpoint& peer) {
+    discovery_service.bootstrap_peer(peer);
+    (void)swarm_transfer_service.bootstrap_peer(peer);
+  };
   deps.start_download = [&swarm_transfer_service](const std::string& torrent_id) {
     swarm_transfer_service.start_download_by_id(torrent_id);
   };
@@ -170,6 +173,7 @@ int BackendApp::run(int argc, char* argv[]) {
   DiscoveryService discovery_service(state, 8789);
   SwarmTransferService swarm_transfer_service(state, catalog_service, manifest_service, piece_store_service);
   add_bootstrap_peers_from_list(discovery_service, state, env_value("P2P_SYNC_PEERS", ""));
+  std::thread([&swarm_transfer_service]() { swarm_transfer_service.transfer_listener(); }).detach();
 
   std::cout << "Loopline P2P receiver: " << state.advertised_host << ':' << state.transfer_port << '\n';
   std::cout << "Bind host: " << state.bind_host
