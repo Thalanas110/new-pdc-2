@@ -13,6 +13,7 @@ class CatalogService {
  public:
   explicit CatalogService(AppState& state);
 
+  void note_remote_manifest_no_seeder(const TorrentManifest& manifest);
   void publish_local_manifest(const TorrentManifest& manifest,
                               const transfer::PeerEndpoint& local_peer,
                               const std::string& local_status = "seeding");

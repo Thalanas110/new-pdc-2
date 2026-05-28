@@ -486,7 +486,7 @@ bool SwarmTransferService::fetch_catalog_from_peer(const transfer::PeerEndpoint&
       pending_line = next_line;
     }
 
-    catalog_.note_remote_manifest(*manifest, seeders);
+    catalog_.note_remote_manifest_no_seeder(*manifest);
   }
 
   std::string done;
@@ -1031,7 +1031,7 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
                     : std::nullopt;
     if (manifest && source_peer) {
       const bool first_seen = !catalog_.find_manifest(manifest->torrent_id).has_value();
-      catalog_.note_remote_manifest(*manifest, verify_seeders_for_manifest(*source_peer, *manifest));
+      catalog_.note_remote_manifest_no_seeder(*manifest, verify_seeders_for_manifest(*manifest));
       SwarmPeerRecord record;
       record.node_id = "relay-" + peer_key(*source_peer);
       record.host = source_peer->host;

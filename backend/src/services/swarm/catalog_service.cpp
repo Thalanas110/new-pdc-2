@@ -22,6 +22,15 @@ void CatalogService::sync_library_entry_locked(const std::string& torrent_id) {
   state_.replace_library_entry(entry);
 }
 
+void CatalogService::note_remote_manifest_no_seeder(const TorrentManifest& manifest) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  manifests_[manifest.torrent_id] = manifest;
+  if (local_status_.find(manifest.torrent_id) == local_status_.end()) {
+    local_status_[manifest.torrent_id] = "available";
+  }
+  sync_library_entry_locked(manifest.torrent_id);
+}
+
 void CatalogService::publish_local_manifest(const TorrentManifest& manifest,
                                             const transfer::PeerEndpoint& local_peer,
                                             const std::string& local_status) {
