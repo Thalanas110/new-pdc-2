@@ -83,13 +83,81 @@ void append_manifest_lines(std::ostringstream& out, const TorrentManifest& manif
   out << "END\n";
 }
 
-void append_seeder_lines(std::ostringstream& out, const std::vector<transfer::PeerEndpoint>& seeders) {
-  out << "SEEDER_COUNT " << seeders.size() << '\n';
-  for (const auto& seeder : seeders) {
-    out << "HOST " << sanitize_field(seeder.host) << '\n';
-    out << "PORT " << seeder.port << '\n';
-    out << "END\n";
+bool finish_manifest_if_complete(const TorrentManifest& manifest, std::size_t expected_hashes) {
+  return !manifest.torrent_id.empty() && manifest.piece_count == manifest.piece_hashes.size() &&
+         expected_hashes == manifest.piece_hashes.size();
+}
+
+bool apply_manifest_line(const std::string& line,
+                         TorrentManifest& manifest,
+                         std::size_t& expected_hashes,
+                         bool& finished) {
+  finished = false;
+  if (line == "END") {
+    finished = true;
+    return finish_manifest_if_complete(manifest, expected_hashes);
   }
+
+  if (line.rfind("TORRENT ", 0) == 0) {
+    manifest.torrent_id = line.substr(8);
+    return true;
+  }
+  if (line.rfind("NAME ", 0) == 0) {
+    manifest.display_name = line.substr(5);
+    return true;
+  }
+  if (line.rfind("PUBLISHER ", 0) == 0) {
+    manifest.publisher_node_id = line.substr(10);
+    return true;
+  }
+  if (line.rfind("FILE_SIZE ", 0) == 0) {
+    const auto parsed = parse_u64(line.substr(10));
+    if (!parsed) {
+      return false;
+    }
+    manifest.file_size = *parsed;
+    return true;
+  }
+  if (line.rfind("PIECE_SIZE ", 0) == 0) {
+    const auto parsed = parse_u64(line.substr(11));
+    if (!parsed) {
+      return false;
+    }
+    manifest.piece_size = *parsed;
+    return true;
+  }
+  if (line.rfind("PIECE_COUNT ", 0) == 0) {
+    const auto parsed = parse_u64(line.substr(12));
+    if (!parsed) {
+      return false;
+    }
+    manifest.piece_count = *parsed;
+    return true;
+  }
+  if (line.rfind("HASH_COUNT ", 0) == 0) {
+    const auto parsed = parse_u64(line.substr(11));
+    if (!parsed) {
+      return false;
+    }
+    expected_hashes = static_cast<std::size_t>(*parsed);
+    manifest.piece_hashes.clear();
+    manifest.piece_hashes.reserve(expected_hashes);
+    return true;
+  }
+  if (line.rfind("HASH ", 0) == 0) {
+    const auto parsed = parse_u64(line.substr(5));
+    if (!parsed) {
+      return false;
+    }
+    manifest.piece_hashes.push_back(*parsed);
+    return true;
+  }
+  if (line.rfind("CREATED_AT ", 0) == 0) {
+    manifest.created_at = line.substr(11);
+    return true;
+  }
+
+  return false;
 }
 
 std::optional<TorrentManifest> read_manifest_block(socket_t client) {
@@ -102,84 +170,44 @@ std::optional<TorrentManifest> read_manifest_block(socket_t client) {
       return std::nullopt;
     }
 
-    if (line == "END") {
-      if (manifest.torrent_id.empty() || manifest.piece_count != manifest.piece_hashes.size() ||
-          expected_hashes != manifest.piece_hashes.size()) {
-        return std::nullopt;
-      }
+    bool finished = false;
+    if (!apply_manifest_line(line, manifest, expected_hashes, finished)) {
+      return std::nullopt;
+    }
+    if (finished) {
       return manifest;
     }
-
-    if (line.rfind("TORRENT ", 0) == 0) {
-      manifest.torrent_id = line.substr(8);
-      continue;
-    }
-    if (line.rfind("NAME ", 0) == 0) {
-      manifest.display_name = line.substr(5);
-      continue;
-    }
-    if (line.rfind("PUBLISHER ", 0) == 0) {
-      manifest.publisher_node_id = line.substr(10);
-      continue;
-    }
-    if (line.rfind("FILE_SIZE ", 0) == 0) {
-      const auto parsed = parse_u64(line.substr(10));
-      if (!parsed) {
-        return std::nullopt;
-      }
-      manifest.file_size = *parsed;
-      continue;
-    }
-    if (line.rfind("PIECE_SIZE ", 0) == 0) {
-      const auto parsed = parse_u64(line.substr(11));
-      if (!parsed) {
-        return std::nullopt;
-      }
-      manifest.piece_size = *parsed;
-      continue;
-    }
-    if (line.rfind("PIECE_COUNT ", 0) == 0) {
-      const auto parsed = parse_u64(line.substr(12));
-      if (!parsed) {
-        return std::nullopt;
-      }
-      manifest.piece_count = *parsed;
-      continue;
-    }
-    if (line.rfind("HASH_COUNT ", 0) == 0) {
-      const auto parsed = parse_u64(line.substr(11));
-      if (!parsed) {
-        return std::nullopt;
-      }
-      expected_hashes = static_cast<std::size_t>(*parsed);
-      manifest.piece_hashes.clear();
-      manifest.piece_hashes.reserve(expected_hashes);
-      continue;
-    }
-    if (line.rfind("HASH ", 0) == 0) {
-      const auto parsed = parse_u64(line.substr(5));
-      if (!parsed) {
-        return std::nullopt;
-      }
-      manifest.piece_hashes.push_back(*parsed);
-      continue;
-    }
-    if (line.rfind("CREATED_AT ", 0) == 0) {
-      manifest.created_at = line.substr(11);
-      continue;
-    }
-
-    return std::nullopt;
   }
 }
 
-std::optional<std::vector<transfer::PeerEndpoint>> read_seeder_block(socket_t client) {
-  std::string seeder_count_line;
-  if (!read_prefixed_value(client, "SEEDER_COUNT ", seeder_count_line)) {
+std::optional<TorrentManifest> read_manifest_block_from_first_line(socket_t client, const std::string& first_line) {
+  TorrentManifest manifest;
+  std::size_t expected_hashes = 0;
+
+  std::string line = first_line;
+  while (true) {
+    bool finished = false;
+    if (!apply_manifest_line(line, manifest, expected_hashes, finished)) {
+      return std::nullopt;
+    }
+    if (finished) {
+      return manifest;
+    }
+
+    if (!netio::read_line(client, line)) {
+      return std::nullopt;
+    }
+  }
+}
+
+std::optional<std::vector<transfer::PeerEndpoint>> read_seeder_block_from_count_line(
+    socket_t client,
+    const std::string& seeder_count_line) {
+  if (seeder_count_line.rfind("SEEDER_COUNT ", 0) != 0) {
     return std::nullopt;
   }
 
-  const auto seeder_count = parse_u64(seeder_count_line);
+  const auto seeder_count = parse_u64(seeder_count_line.substr(13));
   if (!seeder_count) {
     return std::nullopt;
   }
@@ -261,6 +289,10 @@ bool send_http_json_response(socket_t client,
 
 bool same_endpoint(const transfer::PeerEndpoint& lhs, const transfer::PeerEndpoint& rhs) {
   return lhs.host == rhs.host && lhs.port == rhs.port;
+}
+
+bool bitfield_is_complete(const std::vector<bool>& bitfield) {
+  return std::all_of(bitfield.begin(), bitfield.end(), [](bool present) { return present; });
 }
 
 }  // namespace
@@ -415,23 +447,50 @@ bool SwarmTransferService::fetch_catalog_from_peer(const transfer::PeerEndpoint&
     return false;
   }
 
+  std::string pending_line;
   for (std::uint64_t index = 0; index < *manifest_count; ++index) {
-    const auto manifest = read_manifest_block(connected);
+    std::string first_line;
+    if (!pending_line.empty()) {
+      first_line = pending_line;
+      pending_line.clear();
+    } else if (!netio::read_line(connected, first_line)) {
+      close_socket(connected);
+      return false;
+    }
+
+    const auto manifest = read_manifest_block_from_first_line(connected, first_line);
     if (!manifest) {
       close_socket(connected);
       return false;
     }
 
-    const auto seeders = read_seeder_block(connected);
-    if (!seeders) {
+    std::vector<transfer::PeerEndpoint> seeders = verify_seeders_for_manifest(peer, *manifest);
+    std::string next_line;
+    if (!netio::read_line(connected, next_line)) {
       close_socket(connected);
       return false;
     }
-    catalog_.note_remote_manifest(*manifest, *seeders);
+
+    if (next_line.rfind("SEEDER_COUNT ", 0) == 0) {
+      const auto advertised_seeders = read_seeder_block_from_count_line(connected, next_line);
+      if (!advertised_seeders) {
+        close_socket(connected);
+        return false;
+      }
+      seeders = *advertised_seeders;
+      if (!netio::read_line(connected, pending_line)) {
+        close_socket(connected);
+        return false;
+      }
+    } else {
+      pending_line = next_line;
+    }
+
+    catalog_.note_remote_manifest(*manifest, seeders);
   }
 
   std::string done;
-  const bool ok = netio::read_line(connected, done) && done == "DONE";
+  const bool ok = (!pending_line.empty() ? pending_line == "DONE" : netio::read_line(connected, done) && done == "DONE");
   close_socket(connected);
   return ok;
 }
@@ -613,12 +672,10 @@ bool SwarmTransferService::announce_manifest_to_peer(const transfer::PeerEndpoin
   }
 
   std::ostringstream request;
-  const auto seeders = catalog_.seeders_for(manifest.torrent_id);
   request << "SWARM/1\nMANIFEST_PUSH\n";
   request << "HOST " << sanitize_field(state_.advertised_host) << '\n';
   request << "PORT " << state_.transfer_port << '\n';
   append_manifest_lines(request, manifest);
-  append_seeder_lines(request, seeders);
 
   if (!netio::send_text(connected, request.str())) {
     close_socket(connected);
@@ -631,6 +688,16 @@ bool SwarmTransferService::announce_manifest_to_peer(const transfer::PeerEndpoin
                   response == "OK";
   close_socket(connected);
   return ok;
+}
+
+std::vector<transfer::PeerEndpoint> SwarmTransferService::verify_seeders_for_manifest(
+    const transfer::PeerEndpoint& peer,
+    const TorrentManifest& manifest) const {
+  const auto bitfield = request_bitfield(peer, manifest);
+  if (!bitfield || !bitfield_is_complete(*bitfield)) {
+    return {};
+  }
+  return {peer};
 }
 
 void SwarmTransferService::announce_manifest_to_known_peers(const TorrentManifest& manifest,
@@ -913,12 +980,11 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
   if (command == "CATALOG_REQUEST") {
     std::string blank;
     if (netio::read_line(client, blank)) {
-      const auto manifests = catalog_.advertised_manifests_snapshot();
+      const auto manifests = catalog_.manifests_snapshot();
       std::ostringstream response;
       response << "SWARM/1\nCATALOG_RESPONSE\nCOUNT " << manifests.size() << '\n';
       for (const auto& manifest : manifests) {
-        append_manifest_lines(response, manifest.manifest);
-        append_seeder_lines(response, manifest.seeders);
+        append_manifest_lines(response, manifest);
       }
       response << "DONE\n";
       (void)netio::send_text(client, response.str());
@@ -959,14 +1025,13 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
     }
 
     const auto manifest = read_manifest_block(client);
-    const auto seeders = manifest ? read_seeder_block(client) : std::nullopt;
     const auto parsed_port = parse_int(port_line);
     const auto source_peer =
         parsed_port ? transfer::parse_peer_endpoint(host + ":" + std::to_string(*parsed_port), *parsed_port)
                     : std::nullopt;
-    if (manifest && seeders && source_peer) {
+    if (manifest && source_peer) {
       const bool first_seen = !catalog_.find_manifest(manifest->torrent_id).has_value();
-      catalog_.note_remote_manifest(*manifest, *seeders);
+      catalog_.note_remote_manifest(*manifest, verify_seeders_for_manifest(*source_peer, *manifest));
       SwarmPeerRecord record;
       record.node_id = "relay-" + peer_key(*source_peer);
       record.host = source_peer->host;

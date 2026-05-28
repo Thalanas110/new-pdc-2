@@ -22,7 +22,6 @@ class CatalogService {
   void mark_local_completion(const TorrentManifest& manifest, const transfer::PeerEndpoint& local_peer);
   std::optional<TorrentManifest> find_manifest(const std::string& torrent_id) const;
   std::vector<TorrentManifest> manifests_snapshot() const;
-  std::vector<CatalogManifestEntry> advertised_manifests_snapshot() const;
   std::vector<transfer::PeerEndpoint> seeders_for(const std::string& torrent_id) const;
   std::vector<TorrentLibraryEntry> library_snapshot() const;
   std::string library_json() const;

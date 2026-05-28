@@ -38,6 +38,21 @@ std::vector<char> read_bytes(const fs::path& path) {
   return std::vector<char>(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
 }
 
+void append_legacy_manifest_lines(std::ostringstream& out, const TorrentManifest& manifest) {
+  out << "TORRENT " << manifest.torrent_id << '\n';
+  out << "NAME " << manifest.display_name << '\n';
+  out << "PUBLISHER " << manifest.publisher_node_id << '\n';
+  out << "FILE_SIZE " << manifest.file_size << '\n';
+  out << "PIECE_SIZE " << manifest.piece_size << '\n';
+  out << "PIECE_COUNT " << manifest.piece_count << '\n';
+  out << "HASH_COUNT " << manifest.piece_hashes.size() << '\n';
+  for (const auto piece_hash : manifest.piece_hashes) {
+    out << "HASH " << piece_hash << '\n';
+  }
+  out << "CREATED_AT " << manifest.created_at << '\n';
+  out << "END\n";
+}
+
 bool wait_for(const std::function<bool()>& predicate, std::chrono::milliseconds timeout) {
   const auto start = std::chrono::steady_clock::now();
   while ((std::chrono::steady_clock::now() - start) < timeout) {
@@ -56,6 +71,70 @@ const SwarmPeerRecord* find_peer_by_endpoint(const std::vector<SwarmPeerRecord>&
     return peer.host == host && peer.port == port;
   });
   return found == peers.end() ? nullptr : &(*found);
+}
+
+bool legacy_catalog_request_finishes_after_manifest(const transfer::PeerEndpoint& peer) {
+  const socket_t connected = netio::connect_to_peer(peer.host, peer.port);
+  if (connected == invalid_socket) {
+    return false;
+  }
+
+  if (!netio::send_text(connected, "SWARM/1\nCATALOG_REQUEST\n\n")) {
+    close_socket(connected);
+    return false;
+  }
+
+  std::string magic;
+  std::string command;
+  std::string count_line;
+  if (!netio::read_line(connected, magic) || !netio::read_line(connected, command) || !netio::read_line(connected, count_line) ||
+      magic != "SWARM/1" || command != "CATALOG_RESPONSE" || count_line.rfind("COUNT ", 0) != 0) {
+    close_socket(connected);
+    return false;
+  }
+
+  std::string line;
+  do {
+    if (!netio::read_line(connected, line)) {
+      close_socket(connected);
+      return false;
+    }
+  } while (line != "END");
+
+  if (!netio::read_line(connected, line)) {
+    close_socket(connected);
+    return false;
+  }
+
+  close_socket(connected);
+  return line == "DONE";
+}
+
+bool send_legacy_manifest_push(const transfer::PeerEndpoint& peer,
+                               const transfer::PeerEndpoint& source_peer,
+                               const TorrentManifest& manifest) {
+  const socket_t connected = netio::connect_to_peer(peer.host, peer.port);
+  if (connected == invalid_socket) {
+    return false;
+  }
+
+  std::ostringstream request;
+  request << "SWARM/1\nMANIFEST_PUSH\n";
+  request << "HOST " << source_peer.host << '\n';
+  request << "PORT " << source_peer.port << '\n';
+  append_legacy_manifest_lines(request, manifest);
+
+  if (!netio::send_text(connected, request.str())) {
+    close_socket(connected);
+    return false;
+  }
+
+  std::string magic;
+  std::string response;
+  const bool ok =
+      netio::read_line(connected, magic) && netio::read_line(connected, response) && magic == "SWARM/1" && response == "OK";
+  close_socket(connected);
+  return ok;
 }
 
 struct SwarmNode {
@@ -143,6 +222,7 @@ int main() {
   const auto manifest = publisher.transfer.publish_file("demo.bin", payload);
   assert(manifest.has_value());
   assert(manifest->piece_count >= 3);
+  assert(legacy_catalog_request_finishes_after_manifest(transfer::PeerEndpoint{"127.0.0.1", 9411}));
 
   SwarmNode sync_only(root / "sync-only", 9415);
   sync_only.start();
@@ -182,6 +262,19 @@ int main() {
       },
       std::chrono::seconds(2));
   assert(relay_viewer_keeps_original_seeder_count);
+
+  SwarmNode legacy_push_receiver(root / "legacy-push-receiver", 9417);
+  legacy_push_receiver.start();
+  assert(send_legacy_manifest_push(transfer::PeerEndpoint{"127.0.0.1", 9417},
+                                   transfer::PeerEndpoint{"127.0.0.1", 9411},
+                                   *manifest));
+  const bool legacy_push_visible = wait_for(
+      [&]() {
+        const auto library = legacy_push_receiver.state.library_snapshot();
+        return library.size() == 1 && library[0].torrent_id == manifest->torrent_id;
+      },
+      std::chrono::seconds(2));
+  assert(legacy_push_visible);
 
   const bool leecher_catalog_ready =
       leecher.transfer.bootstrap_peer(transfer::PeerEndpoint{"127.0.0.1", 9411});
@@ -277,6 +370,7 @@ int main() {
   assert(read_bytes(fanout.state.receive_dir / "demo-2.bin") == second_payload);
 
   sync_only.stop();
+  legacy_push_receiver.stop();
   relay_viewer.stop();
   fanout.stop();
   leecher.stop();

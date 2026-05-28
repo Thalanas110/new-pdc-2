@@ -81,28 +81,6 @@ std::vector<TorrentManifest> CatalogService::manifests_snapshot() const {
   return manifests;
 }
 
-std::vector<CatalogManifestEntry> CatalogService::advertised_manifests_snapshot() const {
-  std::lock_guard<std::mutex> lock(mutex_);
-  std::vector<CatalogManifestEntry> manifests;
-  manifests.reserve(manifests_.size());
-  for (const auto& [torrent_id, manifest] : manifests_) {
-    CatalogManifestEntry entry;
-    entry.manifest = manifest;
-
-    const auto seeder_found = seeders_.find(torrent_id);
-    if (seeder_found != seeders_.end()) {
-      entry.seeders.reserve(seeder_found->second.size());
-      for (const auto& [peer_key, peer] : seeder_found->second) {
-        (void)peer_key;
-        entry.seeders.push_back(peer);
-      }
-    }
-
-    manifests.push_back(entry);
-  }
-  return manifests;
-}
-
 std::vector<transfer::PeerEndpoint> CatalogService::seeders_for(const std::string& torrent_id) const {
   std::lock_guard<std::mutex> lock(mutex_);
   std::vector<transfer::PeerEndpoint> peers;

@@ -44,6 +44,8 @@ class SwarmTransferService {
   bool send_hello_to_peer(const transfer::PeerEndpoint& peer) const;
   bool announce_manifest_to_peer(const transfer::PeerEndpoint& peer, const TorrentManifest& manifest) const;
   void announce_manifest_to_known_peers(const TorrentManifest& manifest, const std::string& exclude_peer_key = "");
+  std::vector<transfer::PeerEndpoint> verify_seeders_for_manifest(const transfer::PeerEndpoint& peer,
+                                                                  const TorrentManifest& manifest) const;
   std::optional<std::vector<bool>> request_bitfield(const transfer::PeerEndpoint& peer,
                                                     const TorrentManifest& manifest) const;
   std::optional<std::vector<char>> request_piece(const transfer::PeerEndpoint& peer,
