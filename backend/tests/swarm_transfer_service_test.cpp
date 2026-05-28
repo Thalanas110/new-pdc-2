@@ -121,10 +121,12 @@ int main() {
   SwarmNode publisher(root / "publisher", 9411);
   SwarmNode leecher(root / "leecher", 9412);
   SwarmNode fanout(root / "fanout", 9413);
+  SwarmNode relay_viewer(root / "relay-viewer", 9416);
 
   publisher.start();
   leecher.start();
   fanout.start();
+  relay_viewer.start();
 
   {
     SwarmNode offline(root / "offline", 9414);
@@ -160,7 +162,26 @@ int main() {
         },
         std::chrono::seconds(7));
     assert(synced_catalog);
+    const auto library = sync_only.state.library_snapshot();
+    assert(library.size() == 1);
+    assert(library[0].seeder_count == 1);
   }
+
+  assert(relay_viewer.transfer.bootstrap_peer(transfer::PeerEndpoint{"127.0.0.1", 9415}));
+  const bool relay_viewer_learned_publisher = wait_for(
+      [&]() {
+        const auto* peer = find_peer_by_endpoint(relay_viewer.state.swarm_peers_snapshot(), "127.0.0.1", 9411);
+        return peer != nullptr && peer->reachable;
+      },
+      std::chrono::seconds(4));
+  assert(relay_viewer_learned_publisher);
+  const bool relay_viewer_keeps_original_seeder_count = wait_for(
+      [&]() {
+        const auto library = relay_viewer.state.library_snapshot();
+        return library.size() == 1 && library[0].seeder_count == 1;
+      },
+      std::chrono::seconds(2));
+  assert(relay_viewer_keeps_original_seeder_count);
 
   const bool leecher_catalog_ready =
       leecher.transfer.bootstrap_peer(transfer::PeerEndpoint{"127.0.0.1", 9411});
@@ -192,7 +213,7 @@ int main() {
   const bool two_seeders_visible = wait_for(
       [&]() {
         const auto library = fanout.state.library_snapshot();
-        return library.size() == 1 && library[0].seeder_count >= 2;
+        return library.size() == 1 && library[0].seeder_count == 2;
       },
       std::chrono::seconds(2));
   assert(two_seeders_visible);
@@ -256,6 +277,7 @@ int main() {
   assert(read_bytes(fanout.state.receive_dir / "demo-2.bin") == second_payload);
 
   sync_only.stop();
+  relay_viewer.stop();
   fanout.stop();
   leecher.stop();
   publisher.stop();

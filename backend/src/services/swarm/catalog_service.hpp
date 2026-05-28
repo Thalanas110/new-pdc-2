@@ -16,11 +16,13 @@ class CatalogService {
   void publish_local_manifest(const TorrentManifest& manifest,
                               const transfer::PeerEndpoint& local_peer,
                               const std::string& local_status = "seeding");
-  void note_remote_manifest(const TorrentManifest& manifest, const transfer::PeerEndpoint& seeder_peer);
+  void note_remote_manifest(const TorrentManifest& manifest,
+                            const std::vector<transfer::PeerEndpoint>& seeder_peers);
   void set_local_status(const std::string& torrent_id, const std::string& local_status);
   void mark_local_completion(const TorrentManifest& manifest, const transfer::PeerEndpoint& local_peer);
   std::optional<TorrentManifest> find_manifest(const std::string& torrent_id) const;
   std::vector<TorrentManifest> manifests_snapshot() const;
+  std::vector<CatalogManifestEntry> advertised_manifests_snapshot() const;
   std::vector<transfer::PeerEndpoint> seeders_for(const std::string& torrent_id) const;
   std::vector<TorrentLibraryEntry> library_snapshot() const;
   std::string library_json() const;

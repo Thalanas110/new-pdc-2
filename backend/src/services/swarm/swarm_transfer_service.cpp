@@ -83,6 +83,15 @@ void append_manifest_lines(std::ostringstream& out, const TorrentManifest& manif
   out << "END\n";
 }
 
+void append_seeder_lines(std::ostringstream& out, const std::vector<transfer::PeerEndpoint>& seeders) {
+  out << "SEEDER_COUNT " << seeders.size() << '\n';
+  for (const auto& seeder : seeders) {
+    out << "HOST " << sanitize_field(seeder.host) << '\n';
+    out << "PORT " << seeder.port << '\n';
+    out << "END\n";
+  }
+}
+
 std::optional<TorrentManifest> read_manifest_block(socket_t client) {
   TorrentManifest manifest;
   std::size_t expected_hashes = 0;
@@ -162,6 +171,42 @@ std::optional<TorrentManifest> read_manifest_block(socket_t client) {
 
     return std::nullopt;
   }
+}
+
+std::optional<std::vector<transfer::PeerEndpoint>> read_seeder_block(socket_t client) {
+  std::string seeder_count_line;
+  if (!read_prefixed_value(client, "SEEDER_COUNT ", seeder_count_line)) {
+    return std::nullopt;
+  }
+
+  const auto seeder_count = parse_u64(seeder_count_line);
+  if (!seeder_count) {
+    return std::nullopt;
+  }
+
+  std::vector<transfer::PeerEndpoint> seeders;
+  seeders.reserve(static_cast<std::size_t>(*seeder_count));
+  for (std::uint64_t index = 0; index < *seeder_count; ++index) {
+    std::string host;
+    std::string port_line;
+    std::string end;
+    if (!read_prefixed_value(client, "HOST ", host) || !read_prefixed_value(client, "PORT ", port_line) ||
+        !netio::read_line(client, end) || end != "END") {
+      return std::nullopt;
+    }
+
+    const auto parsed_port = parse_int(port_line);
+    const auto peer =
+        parsed_port ? transfer::parse_peer_endpoint(host + ":" + std::to_string(*parsed_port), *parsed_port)
+                    : std::nullopt;
+    if (!peer) {
+      return std::nullopt;
+    }
+
+    seeders.push_back(*peer);
+  }
+
+  return seeders;
 }
 
 std::string bitfield_string(const std::vector<bool>& bitfield) {
@@ -376,7 +421,13 @@ bool SwarmTransferService::fetch_catalog_from_peer(const transfer::PeerEndpoint&
       close_socket(connected);
       return false;
     }
-    catalog_.note_remote_manifest(*manifest, peer);
+
+    const auto seeders = read_seeder_block(connected);
+    if (!seeders) {
+      close_socket(connected);
+      return false;
+    }
+    catalog_.note_remote_manifest(*manifest, *seeders);
   }
 
   std::string done;
@@ -562,10 +613,12 @@ bool SwarmTransferService::announce_manifest_to_peer(const transfer::PeerEndpoin
   }
 
   std::ostringstream request;
+  const auto seeders = catalog_.seeders_for(manifest.torrent_id);
   request << "SWARM/1\nMANIFEST_PUSH\n";
   request << "HOST " << sanitize_field(state_.advertised_host) << '\n';
   request << "PORT " << state_.transfer_port << '\n';
   append_manifest_lines(request, manifest);
+  append_seeder_lines(request, seeders);
 
   if (!netio::send_text(connected, request.str())) {
     close_socket(connected);
@@ -860,11 +913,12 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
   if (command == "CATALOG_REQUEST") {
     std::string blank;
     if (netio::read_line(client, blank)) {
-      const auto manifests = catalog_.manifests_snapshot();
+      const auto manifests = catalog_.advertised_manifests_snapshot();
       std::ostringstream response;
       response << "SWARM/1\nCATALOG_RESPONSE\nCOUNT " << manifests.size() << '\n';
       for (const auto& manifest : manifests) {
-        append_manifest_lines(response, manifest);
+        append_manifest_lines(response, manifest.manifest);
+        append_seeder_lines(response, manifest.seeders);
       }
       response << "DONE\n";
       (void)netio::send_text(client, response.str());
@@ -905,13 +959,14 @@ void SwarmTransferService::handle_swarm_client(socket_t client, const std::strin
     }
 
     const auto manifest = read_manifest_block(client);
+    const auto seeders = manifest ? read_seeder_block(client) : std::nullopt;
     const auto parsed_port = parse_int(port_line);
     const auto source_peer =
         parsed_port ? transfer::parse_peer_endpoint(host + ":" + std::to_string(*parsed_port), *parsed_port)
                     : std::nullopt;
-    if (manifest && source_peer) {
+    if (manifest && seeders && source_peer) {
       const bool first_seen = !catalog_.find_manifest(manifest->torrent_id).has_value();
-      catalog_.note_remote_manifest(*manifest, *source_peer);
+      catalog_.note_remote_manifest(*manifest, *seeders);
       SwarmPeerRecord record;
       record.node_id = "relay-" + peer_key(*source_peer);
       record.host = source_peer->host;

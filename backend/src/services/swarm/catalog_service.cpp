@@ -33,10 +33,13 @@ void CatalogService::publish_local_manifest(const TorrentManifest& manifest,
 }
 
 void CatalogService::note_remote_manifest(const TorrentManifest& manifest,
-                                          const transfer::PeerEndpoint& seeder_peer) {
+                                          const std::vector<transfer::PeerEndpoint>& seeder_peers) {
   std::lock_guard<std::mutex> lock(mutex_);
   manifests_[manifest.torrent_id] = manifest;
-  seeders_[manifest.torrent_id][transfer::peer_endpoint_key(seeder_peer.host, seeder_peer.port)] = seeder_peer;
+  auto& known_seeders = seeders_[manifest.torrent_id];
+  for (const auto& seeder_peer : seeder_peers) {
+    known_seeders[transfer::peer_endpoint_key(seeder_peer.host, seeder_peer.port)] = seeder_peer;
+  }
   if (local_status_.find(manifest.torrent_id) == local_status_.end()) {
     local_status_[manifest.torrent_id] = "available";
   }
@@ -74,6 +77,28 @@ std::vector<TorrentManifest> CatalogService::manifests_snapshot() const {
   for (const auto& [torrent_id, manifest] : manifests_) {
     (void)torrent_id;
     manifests.push_back(manifest);
+  }
+  return manifests;
+}
+
+std::vector<CatalogManifestEntry> CatalogService::advertised_manifests_snapshot() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<CatalogManifestEntry> manifests;
+  manifests.reserve(manifests_.size());
+  for (const auto& [torrent_id, manifest] : manifests_) {
+    CatalogManifestEntry entry;
+    entry.manifest = manifest;
+
+    const auto seeder_found = seeders_.find(torrent_id);
+    if (seeder_found != seeders_.end()) {
+      entry.seeders.reserve(seeder_found->second.size());
+      for (const auto& [peer_key, peer] : seeder_found->second) {
+        (void)peer_key;
+        entry.seeders.push_back(peer);
+      }
+    }
+
+    manifests.push_back(entry);
   }
   return manifests;
 }

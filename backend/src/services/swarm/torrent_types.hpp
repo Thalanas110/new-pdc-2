@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/transfer_core.hpp"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -13,4 +15,9 @@ struct TorrentManifest {
   std::uint64_t piece_count = 0;
   std::vector<std::uint64_t> piece_hashes;
   std::string created_at;
+};
+
+struct CatalogManifestEntry {
+  TorrentManifest manifest;
+  std::vector<transfer::PeerEndpoint> seeders;
 };
